@@ -3291,9 +3291,12 @@ def init_commodity_intelligence_tab():
         """Gerçek emtia fiyatlarını Yahoo Finance'den çeker"""
         global YFINANCE_AVAILABLE
         
-        # Yükleniyor durumu göster
-        if status_label:
-            status_label.configure(text="Hammadde verileri yükleniyor...")
+        # Yükleniyor durumu göster (isteğe bağlı - yoksa devam et)
+        try:
+            if 'status_label' in globals() and status_label:
+                status_label.configure(text="Hammadde verileri yükleniyor...")
+        except:
+            pass  # Status label yoksa veya hata varsa sessizce devam et
         
         def _fetch():
             """Arka planda veri çeker"""
@@ -3445,20 +3448,23 @@ def init_commodity_intelligence_tab():
                                     continue
                         except Exception as e:
                             print(f"{commodity} için {days} günlük gerçek veri çekilemedi: {e}")
+                    
+                    # Gerçek veri çekilemezse simülasyon oluştur
+                    dates = [(datetime.datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days, -1, -1)]
+                    prices = [base_price + random.uniform(-base_price*PRICE_VARIANCE_FACTOR, base_price*PRICE_VARIANCE_FACTOR) for _ in dates]
+                    trend = np.linspace(base_price * TREND_START_FACTOR, base_price, len(prices))
+                    prices = [p * PRICE_BLEND_RATIO + t * TREND_BLEND_RATIO for p, t in zip(prices, trend)]
+                    history[days] = {'dates': dates, 'prices': prices}
                 
-                # Gerçek veri çekilemezse simülasyon oluştur
-                dates = [(datetime.datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days, -1, -1)]
-                prices = [base_price + random.uniform(-base_price*PRICE_VARIANCE_FACTOR, base_price*PRICE_VARIANCE_FACTOR) for _ in dates]
-                trend = np.linspace(base_price * TREND_START_FACTOR, base_price, len(prices))
-                prices = [p * PRICE_BLEND_RATIO + t * TREND_BLEND_RATIO for p, t in zip(prices, trend)]
-                history[days] = {'dates': dates, 'prices': prices}
-            
-            commodity_history_global[commodity] = history
+                commodity_history_global[commodity] = history
         
         def _update_ui(data):
             """UI'yi güncelle"""
-            if status_label:
-                status_label.configure(text="Veriler güncellendi")
+            try:
+                if 'status_label' in globals() and status_label:
+                    status_label.configure(text="Veriler güncellendi")
+            except:
+                pass  # Status label yoksa veya hata varsa sessizce devam et
         
         # Thread'de çalıştır
         run_in_thread(_fetch, _update_ui)
