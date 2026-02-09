@@ -299,6 +299,101 @@ _log_buffer_size = 10
 # MySQL connection pool
 _db_connection_pool = None
 
+# ---------- HATA LOGLAMA VE DEBUG SİSTEMİ ----------
+import traceback
+import sys
+import threading
+
+# Hata log dosyası
+ERROR_LOG_FILE = f"error_log_{datetime.date.today()}.log"
+
+def log_thread_error(error, context="", location=""):
+    """
+    Thread hatalarını detaylı şekilde loglar
+    Args:
+        error: Exception nesnesi
+        context: Hatanın bağlamı (örn: "update_market_ticker")
+        location: Hatanın yeri (örn: "Line 2249")
+    """
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    thread_id = threading.current_thread().ident
+    thread_name = threading.current_thread().name
+    
+    error_info = {
+        'timestamp': timestamp,
+        'thread_id': thread_id,
+        'thread_name': thread_name,
+        'error_type': type(error).__name__,
+        'error_message': str(error),
+        'context': context,
+        'location': location,
+        'traceback': traceback.format_exc()
+    }
+    
+    # Console'a yazdır
+    print(f"\n{'='*80}")
+    print(f"[HATA] {timestamp} | Thread: {thread_name} (ID: {thread_id})")
+    print(f"[KONUM] {location}")
+    print(f"[BAĞLAM] {context}")
+    print(f"[TİP] {type(error).__name__}")
+    print(f"[MESAJ] {str(error)}")
+    print(f"[TRACEBACK]\n{traceback.format_exc()}")
+    print(f"{'='*80}\n")
+    
+    # Dosyaya yaz
+    try:
+        with open(ERROR_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"TIMESTAMP: {timestamp}\n")
+            f.write(f"THREAD: {thread_name} (ID: {thread_id})\n")
+            f.write(f"LOCATION: {location}\n")
+            f.write(f"CONTEXT: {context}\n")
+            f.write(f"ERROR TYPE: {type(error).__name__}\n")
+            f.write(f"ERROR MESSAGE: {str(error)}\n")
+            f.write(f"TRACEBACK:\n{traceback.format_exc()}\n")
+            f.write(f"{'='*80}\n\n")
+    except Exception as log_error:
+        print(f"Log yazma hatası: {log_error}")
+
+def safe_ui_call(func, context="", location=""):
+    """
+    UI çağrılarını güvenli şekilde yapar ve hataları loglar
+    Args:
+        func: Çağrılacak fonksiyon
+        context: İşlem bağlamı
+        location: Kod konumu
+    """
+    try:
+        return func()
+    except Exception as e:
+        log_thread_error(e, context=context, location=location)
+        return None
+
+def thread_safe_after(root, delay, func, context="", location=""):
+    """
+    root.after() çağrılarını thread-safe ve hata loglamalı yapar
+    Args:
+        root: Tkinter root penceresi
+        delay: Gecikme (ms)
+        func: Çağrılacak fonksiyon
+        context: İşlem bağlamı
+        location: Kod konumu
+    """
+    def wrapped_func():
+        try:
+            if _app_shutting_down:
+                return
+            func()
+        except Exception as e:
+            log_thread_error(e, context=f"after callback: {context}", location=location)
+    
+    try:
+        if not _app_shutting_down:
+            return root.after(delay, wrapped_func)
+    except Exception as e:
+        log_thread_error(e, context=f"root.after failed: {context}", location=location)
+        return None
+
 # ---------- GELİŞMİŞ LOGLAMa VE AKTİVİTE TAKİP SİSTEMİ ----------
 class ActivityLogger:
     """Detaylı kullanıcı aktivite loglama ve raporlama sistemi"""
@@ -775,31 +870,63 @@ class ActivityLogger:
 activity_logger = None
 
 # ---------- PERFORMANS OPTİMİZASYONU YARDIMCI FONKSİYONLAR ----------
-def run_in_thread(target_func, callback=None, error_callback=None):
-    """Thread-safe wrapper for background operations"""
+def run_in_thread(target_func, callback=None, error_callback=None, context="", location=""):
+    """
+    Thread-safe wrapper for background operations with comprehensive error logging
+    Args:
+        target_func: Function to run in background
+        callback: Function to call with result (runs on main thread via root.after)
+        error_callback: Function to call on error (runs on main thread via root.after)
+        context: Description of what this thread does (for error logging)
+        location: Code location (for error logging)
+    """
     def _worker():
         # Check if app is shutting down before doing work
         if _app_shutting_down:
             return
-            
+        
+        func_name = getattr(target_func, '__name__', 'unknown_function')
+        thread_context = context or f"run_in_thread: {func_name}"
+        thread_location = location or "run_in_thread wrapper"
+        
         try:
             result = target_func()
             # Check again before callback
             if not _app_shutting_down and callback:
                 try:
-                    root.after(0, lambda: callback(result))
-                except:
-                    pass  # Ignore if root is being destroyed
+                    root.after(0, lambda: safe_ui_call(
+                        lambda: callback(result),
+                        context=f"{thread_context} - callback",
+                        location=thread_location
+                    ))
+                except Exception as after_error:
+                    log_thread_error(
+                        after_error,
+                        context=f"{thread_context} - root.after callback",
+                        location=thread_location
+                    )
         except Exception as e:
+            log_thread_error(
+                e,
+                context=f"{thread_context} - worker error",
+                location=thread_location
+            )
+            
             if not _app_shutting_down and error_callback:
                 try:
-                    root.after(0, lambda: error_callback(e))
-                except:
-                    pass  # Ignore if root is being destroyed
-            else:
-                print(f"Thread error: {str(e)}")
+                    root.after(0, lambda: safe_ui_call(
+                        lambda: error_callback(e),
+                        context=f"{thread_context} - error_callback",
+                        location=thread_location
+                    ))
+                except Exception as error_after:
+                    log_thread_error(
+                        error_after,
+                        context=f"{thread_context} - root.after error_callback",
+                        location=thread_location
+                    )
     
-    thread = threading.Thread(target=_worker, daemon=True)
+    thread = threading.Thread(target=_worker, daemon=True, name=context or "BackgroundThread")
     thread.start()
     return thread
 
@@ -2224,29 +2351,37 @@ def update_market_ticker():
     
     # Thread içinde çalıştır ki arayüz donmasın
     def _fetch():
-        # TCMB'den döviz kurları
-        usd_now, eur_now = fetch_tcmb_currency()
-        
-        # Yahoo Finance'den Brent petrol
-        brent_now, brent_prev = fetch_yahoo_finance_data("BZ=F")
-        
-        # Fallback değerler - TCMB başarısız olursa Yahoo Finance dene
-        if usd_now is None or eur_now is None:
-            usd_yf, usd_prev = fetch_yahoo_finance_data("USDTRY=X")
-            eur_yf, eur_prev = fetch_yahoo_finance_data("EURTRY=X")
-            if usd_now is None: usd_now, usd_prev = usd_yf if usd_yf else 36.50, 36.40
-            else: usd_prev = usd_now * 0.998  # Yaklaşık önceki değer
-            if eur_now is None: eur_now, eur_prev = eur_yf if eur_yf else 38.20, 38.10
-            else: eur_prev = eur_now * 0.998
-        else:
-            # TCMB başarılı, önceki değerleri tahmin et
-            usd_prev = usd_now * 0.998
-            eur_prev = eur_now * 0.998
-        
-        if brent_now is None: brent_now, brent_prev = 78.40, 78.00
-        
-        # Arayüz güncelleme
-        root.after(0, lambda: _update_label(usd_now, usd_prev, eur_now, eur_prev, brent_now, brent_prev))
+        try:
+            # TCMB'den döviz kurları
+            usd_now, eur_now = fetch_tcmb_currency()
+            
+            # Yahoo Finance'den Brent petrol
+            brent_now, brent_prev = fetch_yahoo_finance_data("BZ=F")
+            
+            # Fallback değerler - TCMB başarısız olursa Yahoo Finance dene
+            if usd_now is None or eur_now is None:
+                usd_yf, usd_prev = fetch_yahoo_finance_data("USDTRY=X")
+                eur_yf, eur_prev = fetch_yahoo_finance_data("EURTRY=X")
+                if usd_now is None: usd_now, usd_prev = usd_yf if usd_yf else 36.50, 36.40
+                else: usd_prev = usd_now * 0.998  # Yaklaşık önceki değer
+                if eur_now is None: eur_now, eur_prev = eur_yf if eur_yf else 38.20, 38.10
+                else: eur_prev = eur_now * 0.998
+            else:
+                # TCMB başarılı, önceki değerleri tahmin et
+                usd_prev = usd_now * 0.998
+                eur_prev = eur_now * 0.998
+            
+            if brent_now is None: brent_now, brent_prev = 78.40, 78.00
+            
+            # Arayüz güncelleme - Thread-safe
+            thread_safe_after(
+                root, 0,
+                lambda: _update_label(usd_now, usd_prev, eur_now, eur_prev, brent_now, brent_prev),
+                context="update_market_ticker - label update",
+                location="Line 2376"
+            )
+        except Exception as e:
+            log_thread_error(e, context="update_market_ticker - data fetch", location="Line 2348")
 
     def _update_label(usd, usd_p, eur, eur_p, brent, brent_p):
         try:
@@ -2280,7 +2415,8 @@ def update_market_ticker():
             if ticker_label:
                 ticker_label.configure(text=ticker_text)
         except Exception as e:
-            # Widget geçersiz veya hata - sessizce devam et
+            # Widget geçersiz veya hata - logla
+            log_thread_error(e, context="update_market_ticker - ticker_label update", location="Line 2407")
             print(f"Ticker label update error: {e}")
     
     threading.Thread(target=_fetch, daemon=True).start()
