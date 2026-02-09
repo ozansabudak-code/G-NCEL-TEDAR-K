@@ -4291,20 +4291,29 @@ Konuyla ilgili destek için iletişime geçebilirsiniz.
 Saygılarımızla,
 [İmza]"""
                     
-                    # Text alanını güncelle
-                    draft_text.configure(state="normal")
-                    draft_text.delete("1.0", "end")
-                    draft_text.insert("1.0", ai_draft)
-                    draft_text.configure(state="normal")  # Düzenlenebilir bırak
+                    # Text alanını güncelle - Ana thread'de yap
+                    def update_draft_ui():
+                        draft_text.configure(state="normal")
+                        draft_text.delete("1.0", "end")
+                        draft_text.insert("1.0", ai_draft)
+                        draft_text.configure(state="normal")  # Düzenlenebilir bırak
+                    
+                    root.after(0, update_draft_ui)
                     
                     # LOG
                     if activity_logger:
                         activity_logger.log_event("AI_DRAFT_GENERATED", f"{len(selected_data)} kayıt için mail taslağı oluşturuldu", "Rek Detaylı Rapor")
                     
                 except Exception as e:
-                    draft_text.configure(state="normal")
-                    draft_text.delete("1.0", "end")
-                    draft_text.insert("1.0", f"Hata oluştu: {str(e)}\n\nLütfen tekrar deneyin veya manuel olarak mail oluşturun.")
+                    error_msg = f"Hata oluştu: {str(e)}\n\nLütfen tekrar deneyin veya manuel olarak mail oluşturun."
+                    
+                    def update_error_ui():
+                        draft_text.configure(state="normal")
+                        draft_text.delete("1.0", "end")
+                        draft_text.insert("1.0", error_msg)
+                    
+                    root.after(0, update_error_ui)
+                    
                     if activity_logger:
                         activity_logger.log_error(f"AI draft hatası: {str(e)}", "Rek Detaylı Rapor")
             
