@@ -299,6 +299,9 @@ _log_buffer_size = 10
 # MySQL connection pool
 _db_connection_pool = None
 
+# Analysis thread state tracking
+analysis_thread_running = False
+
 # ---------- HATA LOGLAMA VE DEBUG SİSTEMİ ----------
 import traceback
 import sys
@@ -7706,7 +7709,11 @@ def stop_loading_gif(): ai_progress_bar.stop(); ai_progress_bar.pack_forget()
 def analiz_et_with_options(dosyalar, filter_type, filter_value):
     """Geliştirilmiş analiz motoru: Hibrit skorlama + stok grubu bazlı detaylı analiz + çoklu filtreleme"""
     global df_global, tedarikci_col_global, phone_col_global, sonuc_global, message_global, grafik_ozet_global, outliers_global
-    global stok_grup_col_global, detay_sonuc_global, market_averages_global
+    global stok_grup_col_global, detay_sonuc_global, market_averages_global, analysis_thread_running
+    
+    # Set flag to indicate analysis is running
+    analysis_thread_running = True
+    
     try:
         # LOG: Analiz başlatıldı
         if activity_logger:
@@ -7982,6 +7989,8 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         root.after(0, lambda msg=error_msg: messagebox.showerror("Hata", msg))
         root.after(0, lambda: ai_status_label.configure(text="Hata"))
     finally:
+        # Clear running flag
+        analysis_thread_running = False
         root.after(0, stop_loading_gif)
 
 def update_listbox(items):
@@ -8421,7 +8430,16 @@ def filter_stock_codes(event):
         stok_kod_combobox['values'] = filtered_list
 
 def start_analysis_threaded():
-    global file_paths_global
+    global file_paths_global, analysis_thread_running
+    
+    # Check if analysis is already running
+    if analysis_thread_running:
+        messagebox.showwarning("Uyarı", 
+            "⚠️ Bir analiz zaten çalışıyor!\n\n"
+            "Lütfen mevcut analiz tamamlanana kadar bekleyin.\n\n"
+            "💡 İpucu: Analiz tamamlandığında 'Analiz bitti' mesajı göreceksiniz.")
+        return
+    
     if not file_paths_global:
         messagebox.showerror("Hata", "Lütfen önce dosya seçin.")
         return
@@ -12086,10 +12104,15 @@ def load_daily_files():
 
 def auto_run_initial_analysis():
     """Başlangıçta tüm veri için otomatik analiz yapar (aykırı değer filtresi olmadan)"""
-    global file_paths_global, analiz_filter_type_var, exclude_outliers_var
+    global file_paths_global, analiz_filter_type_var, exclude_outliers_var, analysis_thread_running
     
     if not file_paths_global:
         print("Otomatik analiz atlandı: Dosya yüklenmemiş")
+        return
+    
+    # Check if analysis is already running
+    if analysis_thread_running:
+        print("Otomatik analiz atlandı: Bir analiz zaten çalışıyor")
         return
     
     try:
