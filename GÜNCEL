@@ -830,8 +830,21 @@ def stop_ticker_animation():
     global ticker_animation_active, ticker_animation_job
     ticker_animation_active = False
     if ticker_animation_job:
-        root.after_cancel(ticker_animation_job)
+        try:
+            root.after_cancel(ticker_animation_job)
+        except:
+            pass
         ticker_animation_job = None
+
+def stop_market_ticker():
+    """Market ticker güncellemelerini durdur"""
+    global market_ticker_job
+    if market_ticker_job:
+        try:
+            root.after_cancel(market_ticker_job)
+        except:
+            pass
+        market_ticker_job = None
 
 def get_db_connection():
     """Bağlantı havuzundan bağlantı al"""
@@ -5228,8 +5241,9 @@ def set_destination_marker(coords):
         dest_coord_str = f"{coords[0]:.4f}, {coords[1]:.4f}"
         ai_insight = get_ai_logistics_analysis(origin_name, dest_coord_str, min_dist, weather_info)
         final_text = initial_text.replace("🤖 Yapay Zeka Lojistik Analizi Hazırlanıyor...", f"\n🧠 AI Lojistik Analizi:\n{ai_insight}")
+        # UI güncellemeyi ana thread'e gönder
         if route_info_label:
-            route_info_label.configure(text=final_text)
+            root.after(0, lambda: route_info_label.configure(text=final_text))
     
     threading.Thread(target=fetch_ai_logistics, daemon=True).start()
 
@@ -5615,7 +5629,8 @@ def show_scorecard():
     
     def fetch_comment():
         comment = get_scorecard_ai_comment(row, grade, description)
-        ai_lbl.configure(text=comment)
+        # UI güncellemeyi ana thread'e gönder
+        root.after(0, lambda: ai_lbl.configure(text=comment))
     threading.Thread(target=fetch_comment, daemon=True).start()
 
 def export_scorecard_pdf():
@@ -5716,7 +5731,11 @@ def update_trend_tab(df, date_col, fiyat_col, miktar_col):
     
     def fetch_comment():
         comment = get_trend_ai_comment(monthly_data.tail(12).to_string(index=False))
-        if loading_lbl.winfo_exists(): loading_lbl.configure(text=comment, font=("Arial", 10), fg="#2c3e50", justify="left", wraplength=900)
+        # UI güncellemeyi ana thread'e gönder
+        def update_ui():
+            if loading_lbl.winfo_exists(): 
+                loading_lbl.configure(text=comment, font=("Arial", 10), fg="#2c3e50", justify="left", wraplength=900)
+        root.after(0, update_ui)
     threading.Thread(target=fetch_comment, daemon=True).start()
 
 # ---------- GELECEK TAHMİNİ (FORECASTING) ----------
@@ -11613,6 +11632,9 @@ def on_closing():
         
         # Ticker animasyonunu durdur
         stop_ticker_animation()
+        
+        # Market ticker güncellemelerini durdur
+        stop_market_ticker()
         
         # Tüm grafikleri temizle
         cleanup_matplotlib_figures()
