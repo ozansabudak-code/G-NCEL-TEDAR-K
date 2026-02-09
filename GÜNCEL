@@ -278,6 +278,21 @@ frames = {}
 menu_buttons = {} 
 current_page_name = None
 
+# Performans Optimizasyonu Global Değişkenler
+# Matplotlib figure cache
+_active_figures = []
+
+# Ticker animation control
+ticker_animation_active = False
+ticker_animation_job = None
+
+# Activity log buffer
+_activity_log_buffer = []
+_log_buffer_size = 10
+
+# MySQL connection pool
+_db_connection_pool = None
+
 # ---------- GELİŞMİŞ LOGLAMa VE AKTİVİTE TAKİP SİSTEMİ ----------
 class ActivityLogger:
     """Detaylı kullanıcı aktivite loglama ve raporlama sistemi"""
@@ -752,6 +767,119 @@ class ActivityLogger:
 
 # Global activity logger
 activity_logger = None
+
+# ---------- PERFORMANS OPTİMİZASYONU YARDIMCI FONKSİYONLAR ----------
+def run_in_thread(target_func, callback=None, error_callback=None):
+    """Thread-safe wrapper for background operations"""
+    def _worker():
+        try:
+            result = target_func()
+            if callback:
+                root.after(0, lambda: callback(result))
+        except Exception as e:
+            if error_callback:
+                root.after(0, lambda: error_callback(e))
+            else:
+                print(f"Thread error: {str(e)}")
+    
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    return thread
+
+def cleanup_matplotlib_figures():
+    """Tüm aktif matplotlib figurelerini temizle"""
+    global _active_figures
+    for fig in _active_figures:
+        try:
+            plt.close(fig)
+        except:
+            pass
+    _active_figures.clear()
+
+def register_figure(fig):
+    """Yeni figure'ı kaydet"""
+    global _active_figures
+    _active_figures.append(fig)
+    return fig
+
+def start_ticker_animation():
+    """Ticker animasyonunu başlat"""
+    global ticker_animation_active
+    ticker_animation_active = True
+    scroll_ticker_animation()
+
+def stop_ticker_animation():
+    """Ticker animasyonunu durdur"""
+    global ticker_animation_active, ticker_animation_job
+    ticker_animation_active = False
+    if ticker_animation_job:
+        root.after_cancel(ticker_animation_job)
+        ticker_animation_job = None
+
+def get_db_connection():
+    """Bağlantı havuzundan bağlantı al"""
+    global _db_connection_pool
+    
+    if not MYSQL_AVAILABLE:
+        return None
+    
+    if _db_connection_pool is None:
+        try:
+            from mysql.connector import pooling
+            # MYSQL_CONFIG kontrolü
+            if not all([MYSQL_CONFIG.get("host"), MYSQL_CONFIG.get("user"), MYSQL_CONFIG.get("database")]):
+                return None
+            
+            _db_connection_pool = pooling.MySQLConnectionPool(
+                pool_name="tedarik_pool",
+                pool_size=5,
+                host=MYSQL_CONFIG["host"],
+                user=MYSQL_CONFIG["user"],
+                password=MYSQL_CONFIG["password"],
+                database=MYSQL_CONFIG["database"]
+            )
+        except Exception as e:
+            print(f"Connection pool error: {e}")
+            return None
+    
+    try:
+        return _db_connection_pool.get_connection()
+    except Exception as e:
+        print(f"Get connection error: {e}")
+        return None
+
+def flush_activity_logs():
+    """Buffer'daki tüm logları veritabanına yaz"""
+    global _activity_log_buffer
+    
+    if not _activity_log_buffer:
+        return
+    
+    def _write():
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor()
+                for log in _activity_log_buffer:
+                    try:
+                        cursor.execute(
+                            "INSERT INTO activity_logs (user, action, details, timestamp) VALUES (%s, %s, %s, %s)",
+                            (log["user"], log["action"], log["details"], log["timestamp"])
+                        )
+                    except:
+                        pass  # Tablo yoksa veya hata varsa sessizce devam et
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except:
+                pass
+    
+    # Thread'de çalıştır
+    try:
+        run_in_thread(_write)
+    except:
+        pass
+    _activity_log_buffer.clear()
 
 # ---------- BACKUP VE GERİ YÜKLEME SİSTEMİ ----------
 def create_backup():
@@ -1568,7 +1696,7 @@ def show_recent_items_menu():
 # ---------- MYSQL BAĞLANTI FONKSİYONLARI ----------
 def create_mysql_connection():
     """
-    MySQL bağlantısı oluşturur.
+    MySQL bağlantısı oluşturur (Connection pool kullanır).
     
     Returns:
         connection: MySQL bağlantı nesnesi veya None
@@ -1583,19 +1711,15 @@ def create_mysql_connection():
         return None
     
     try:
-        connection = mysql.connector.connect(
-            host=MYSQL_CONFIG["host"],
-            user=MYSQL_CONFIG["user"],
-            password=MYSQL_CONFIG["password"],
-            database=MYSQL_CONFIG["database"],
-            raise_on_warnings=MYSQL_CONFIG.get("raise_on_warnings", True)
-        )
+        # Connection pool kullan (performans optimizasyonu)
+        connection = get_db_connection()
         
-        if connection.is_connected():
+        if connection and connection.is_connected():
             if activity_logger:
                 activity_logger.log_event("MYSQL_CONNECT", f"Başarıyla bağlandı: {MYSQL_CONFIG['database']}", "MySQL")
             return connection
-    except mysql.connector.Error as err:
+        return None
+    except Exception as err:
         error_msg = f"MySQL bağlantı hatası: {err}"
         messagebox.showerror("MySQL Hatası", error_msg)
         if activity_logger:
@@ -2131,13 +2255,20 @@ def update_market_ticker():
 
 def scroll_ticker_animation():
     """Metni kaydırarak ticker efekti verir."""
-    if not ticker_label: return
+    global ticker_animation_active, ticker_animation_job
+    
+    if not ticker_animation_active:
+        return  # Durdurulmuşsa çalışma
+    
+    if not ticker_label: 
+        return
+    
     text = ticker_label.cget("text")
     # İlk karakteri sona al
     new_text = text[1:] + text[0]
     ticker_label.configure(text=new_text)
     # Hız ayarı (ms)
-    root.after(200, scroll_ticker_animation)
+    ticker_animation_job = root.after(200, scroll_ticker_animation)
 
 # ---------- HABERLER (RSS) FONKSİYONLARI ----------
 def init_news_tab():
@@ -2522,7 +2653,7 @@ def init_trend_hunter_tab():
     def update_trend_chart(dates, data_dict):
         for widget in chart_frame.winfo_children(): widget.destroy()
         
-        fig = plt.figure(figsize=(8, 4), dpi=100)
+        fig = register_figure(plt.figure(figsize=(8, 4), dpi=100))
         ax = fig.add_subplot(111)
         
         for label, values in data_dict.items():
@@ -2817,7 +2948,7 @@ def init_google_trending_tab():
         for widget in chart_frame.winfo_children():
             widget.destroy()
         
-        fig = plt.figure(figsize=(12, 5), dpi=100)
+        fig = register_figure(plt.figure(figsize=(12, 5), dpi=100))
         ax = fig.add_subplot(111)
         
         # Grafik çiz
@@ -3006,7 +3137,7 @@ def init_production_pipeline_tab():
                     font=("Segoe UI", 12), fg="gray", bg="white").pack(expand=True)
             return
         
-        fig = plt.figure(figsize=(10, 6), dpi=100)
+        fig = register_figure(plt.figure(figsize=(10, 6), dpi=100))
         ax = fig.add_subplot(111)
         
         stages = ['İplik → Kumaş', 'Boyama', 'Paketleme', 'Sevkiyat']
@@ -3160,91 +3291,118 @@ def init_commodity_intelligence_tab():
         """Gerçek emtia fiyatlarını Yahoo Finance'den çeker"""
         global YFINANCE_AVAILABLE
         
-        commodity_prices_global.clear()
+        # Yükleniyor durumu göster
+        if status_label:
+            status_label.configure(text="Hammadde verileri yükleniyor...")
         
-        if YFINANCE_AVAILABLE:
-            try:
-                # Pamuk (Cotton) - CT=F (ICEUS Cotton No.2)
-                cotton_ticker = yf.Ticker("CT=F")
-                cotton_hist = cotton_ticker.history(period="2d")
-                
-                if not cotton_hist.empty and len(cotton_hist) >= 1:
-                    cotton_current = cotton_hist['Close'].iloc[-1]
-                    cotton_previous = cotton_hist['Close'].iloc[-2] if len(cotton_hist) >= 2 else cotton_current * 0.99
+        def _fetch():
+            """Arka planda veri çeker"""
+            commodity_prices_global.clear()
+            
+            if YFINANCE_AVAILABLE:
+                try:
+                    # Pamuk (Cotton) - CT=F (ICEUS Cotton No.2)
+                    cotton_ticker = yf.Ticker("CT=F")
+                    cotton_hist = cotton_ticker.history(period="2d")
                     
-                    commodity_prices_global['Pamuk (Cotlook A Index)'] = {
-                        'current': float(cotton_current),
-                        'previous': float(cotton_previous),
-                        'unit': 'USD/lb',
-                        'change': float(cotton_current - cotton_previous)
-                    }
-                    print(f"Pamuk fiyatı çekildi: {cotton_current:.2f} USD/lb")
-                else:
-                    print("Pamuk fiyatı çekilemedi, varsayılan değer kullanılıyor")
+                    if not cotton_hist.empty and len(cotton_hist) >= 1:
+                        cotton_current = cotton_hist['Close'].iloc[-1]
+                        cotton_previous = cotton_hist['Close'].iloc[-2] if len(cotton_hist) >= 2 else cotton_current * 0.99
+                        
+                        commodity_prices_global['Pamuk (Cotlook A Index)'] = {
+                            'current': float(cotton_current),
+                            'previous': float(cotton_previous),
+                            'unit': 'USD/lb',
+                            'change': float(cotton_current - cotton_previous)
+                        }
+                        print(f"Pamuk fiyatı çekildi: {cotton_current:.2f} USD/lb")
+                    else:
+                        print("Pamuk fiyatı çekilemedi, varsayılan değer kullanılıyor")
+                        commodity_prices_global['Pamuk (Cotlook A Index)'] = {
+                            'current': 94.20,
+                            'previous': 92.50,
+                            'unit': 'USD/lb',
+                            'change': 1.7
+                        }
+                    
+                    # Polyester (PET) - Polyester için doğrudan ticker yok, tahmin kullanıyoruz
+                    # Petrol fiyatlarına bağlı olarak hareket eder
+                    try:
+                        oil_ticker = yf.Ticker("CL=F")  # Crude Oil WTI
+                        oil_hist = oil_ticker.history(period="2d")
+                        
+                        if not oil_hist.empty:
+                            oil_price = oil_hist['Close'].iloc[-1]
+                            # Polyester fiyatı yaklaşık olarak petrol fiyatına göre hesaplanır
+                            # 1 varil petrol ≈ 159 litre, polyester üretimi için maliyet faktörü
+                            polyester_base = 1200
+                            polyester_current = polyester_base + (float(oil_price) - 70) * 10
+                            polyester_previous = polyester_current * 0.98
+                            
+                            commodity_prices_global['Polyester'] = {
+                                'current': float(polyester_current),
+                                'previous': float(polyester_previous),
+                                'unit': 'USD/ton',
+                                'change': float(polyester_current - polyester_previous)
+                            }
+                            print(f"Polyester fiyatı hesaplandı: {polyester_current:.0f} USD/ton (Petrol: {oil_price:.2f})")
+                        else:
+                            raise Exception("Petrol fiyatı çekilemedi")
+                            
+                    except Exception as e:
+                        print(f"Polyester fiyatı hesaplanamadı: {e}, varsayılan değer kullanılıyor")
+                        commodity_prices_global['Polyester'] = {
+                            'current': 1350,
+                            'previous': 1420,
+                            'unit': 'USD/ton',
+                            'change': -70
+                        }
+                    
+                    # Viskon (Viscose) - Doğrudan ticker yok, pamuk fiyatına göre tahmin
+                    if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
+                        cotton_price_cents = commodity_prices_global['Pamuk (Cotlook A Index)']['current'] * 100  # cent/lb
+                        viscose_current = cotton_price_cents * 9.5  # Yaklaşık çarpan
+                        viscose_previous = viscose_current * 0.98
+                        
+                        commodity_prices_global['Viskon'] = {
+                            'current': float(viscose_current),
+                            'previous': float(viscose_previous),
+                            'unit': 'USD/ton',
+                            'change': float(viscose_current - viscose_previous)
+                        }
+                        print(f"Viskon fiyatı hesaplandı: {viscose_current:.0f} USD/ton")
+                    else:
+                        commodity_prices_global['Viskon'] = {
+                            'current': 2100,
+                            'previous': 2050,
+                            'unit': 'USD/ton',
+                            'change': 50
+                        }
+                        
+                except Exception as e:
+                    print(f"Gerçek veri çekme hatası: {e}, varsayılan değerler kullanılıyor")
+                    # Hata durumunda varsayılan değerleri yükle
                     commodity_prices_global['Pamuk (Cotlook A Index)'] = {
                         'current': 94.20,
                         'previous': 92.50,
                         'unit': 'USD/lb',
                         'change': 1.7
                     }
-                
-                # Polyester (PET) - Polyester için doğrudan ticker yok, tahmin kullanıyoruz
-                # Petrol fiyatlarına bağlı olarak hareket eder
-                try:
-                    oil_ticker = yf.Ticker("CL=F")  # Crude Oil WTI
-                    oil_hist = oil_ticker.history(period="2d")
-                    
-                    if not oil_hist.empty:
-                        oil_price = oil_hist['Close'].iloc[-1]
-                        # Polyester fiyatı yaklaşık olarak petrol fiyatına göre hesaplanır
-                        # 1 varil petrol ≈ 159 litre, polyester üretimi için maliyet faktörü
-                        polyester_base = 1200
-                        polyester_current = polyester_base + (float(oil_price) - 70) * 10
-                        polyester_previous = polyester_current * 0.98
-                        
-                        commodity_prices_global['Polyester'] = {
-                            'current': float(polyester_current),
-                            'previous': float(polyester_previous),
-                            'unit': 'USD/ton',
-                            'change': float(polyester_current - polyester_previous)
-                        }
-                        print(f"Polyester fiyatı hesaplandı: {polyester_current:.0f} USD/ton (Petrol: {oil_price:.2f})")
-                    else:
-                        raise Exception("Petrol fiyatı çekilemedi")
-                        
-                except Exception as e:
-                    print(f"Polyester fiyatı hesaplanamadı: {e}, varsayılan değer kullanılıyor")
                     commodity_prices_global['Polyester'] = {
                         'current': 1350,
                         'previous': 1420,
                         'unit': 'USD/ton',
                         'change': -70
                     }
-                
-                # Viskon (Viscose) - Doğrudan ticker yok, pamuk fiyatına göre tahmin
-                if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
-                    cotton_price_cents = commodity_prices_global['Pamuk (Cotlook A Index)']['current'] * 100  # cent/lb
-                    viscose_current = cotton_price_cents * 9.5  # Yaklaşık çarpan
-                    viscose_previous = viscose_current * 0.98
-                    
-                    commodity_prices_global['Viskon'] = {
-                        'current': float(viscose_current),
-                        'previous': float(viscose_previous),
-                        'unit': 'USD/ton',
-                        'change': float(viscose_current - viscose_previous)
-                    }
-                    print(f"Viskon fiyatı hesaplandı: {viscose_current:.0f} USD/ton")
-                else:
                     commodity_prices_global['Viskon'] = {
                         'current': 2100,
                         'previous': 2050,
                         'unit': 'USD/ton',
                         'change': 50
                     }
-                    
-            except Exception as e:
-                print(f"Gerçek veri çekme hatası: {e}, varsayılan değerler kullanılıyor")
-                # Hata durumunda varsayılan değerleri yükle
+            else:
+                # yfinance kütüphanesi yoksa varsayılan değerler
+                print("YFinance kütüphanesi yüklü değil, varsayılan değerler kullanılıyor")
                 commodity_prices_global['Pamuk (Cotlook A Index)'] = {
                     'current': 94.20,
                     'previous': 92.50,
@@ -3263,51 +3421,30 @@ def init_commodity_intelligence_tab():
                     'unit': 'USD/ton',
                     'change': 50
                 }
-        else:
-            # yfinance kütüphanesi yoksa varsayılan değerler
-            print("YFinance kütüphanesi yüklü değil, varsayılan değerler kullanılıyor")
-            commodity_prices_global['Pamuk (Cotlook A Index)'] = {
-                'current': 94.20,
-                'previous': 92.50,
-                'unit': 'USD/lb',
-                'change': 1.7
-            }
-            commodity_prices_global['Polyester'] = {
-                'current': 1350,
-                'previous': 1420,
-                'unit': 'USD/ton',
-                'change': -70
-            }
-            commodity_prices_global['Viskon'] = {
-                'current': 2100,
-                'previous': 2050,
-                'unit': 'USD/ton',
-                'change': 50
-            }
-        
-        # Geçmiş fiyat verisi oluştur (gerçek tarihsel veri veya simülasyon)
-        commodity_history_global.clear()
-        
-        for commodity in commodity_prices_global.keys():
-            base_price = commodity_prices_global[commodity]['current']
-            history = {}
             
-            # Her zaman aralığı için geçmiş veri oluştur
-            for days in [30, 90, 365]:
-                if YFINANCE_AVAILABLE:
-                    try:
-                        # Gerçek tarihsel veri çekmeyi dene
-                        if commodity == 'Pamuk (Cotlook A Index)':
-                            ticker = yf.Ticker("CT=F")
-                            hist = ticker.history(period=f"{days}d")
-                            
-                            if not hist.empty and len(hist) > 0:
-                                dates = [d.strftime("%Y-%m-%d") for d in hist.index]
-                                prices = hist['Close'].tolist()
-                                history[days] = {'dates': dates, 'prices': prices}
-                                continue
-                    except Exception as e:
-                        print(f"{commodity} için {days} günlük gerçek veri çekilemedi: {e}")
+            # Geçmiş fiyat verisi oluştur (gerçek tarihsel veri veya simülasyon)
+            commodity_history_global.clear()
+            
+            for commodity in commodity_prices_global.keys():
+                base_price = commodity_prices_global[commodity]['current']
+                history = {}
+                
+                # Her zaman aralığı için geçmiş veri oluştur
+                for days in [30, 90, 365]:
+                    if YFINANCE_AVAILABLE:
+                        try:
+                            # Gerçek tarihsel veri çekmeyi dene
+                            if commodity == 'Pamuk (Cotlook A Index)':
+                                ticker = yf.Ticker("CT=F")
+                                hist = ticker.history(period=f"{days}d")
+                                
+                                if not hist.empty and len(hist) > 0:
+                                    dates = [d.strftime("%Y-%m-%d") for d in hist.index]
+                                    prices = hist['Close'].tolist()
+                                    history[days] = {'dates': dates, 'prices': prices}
+                                    continue
+                        except Exception as e:
+                            print(f"{commodity} için {days} günlük gerçek veri çekilemedi: {e}")
                 
                 # Gerçek veri çekilemezse simülasyon oluştur
                 dates = [(datetime.datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days, -1, -1)]
@@ -3317,6 +3454,14 @@ def init_commodity_intelligence_tab():
                 history[days] = {'dates': dates, 'prices': prices}
             
             commodity_history_global[commodity] = history
+        
+        def _update_ui(data):
+            """UI'yi güncelle"""
+            if status_label:
+                status_label.configure(text="Veriler güncellendi")
+        
+        # Thread'de çalıştır
+        run_in_thread(_fetch, _update_ui)
     
     def update_price_cards():
         """Fiyat kartlarını günceller"""
@@ -3368,7 +3513,7 @@ def init_commodity_intelligence_tab():
         dates = history['dates']
         prices = history['prices']
         
-        fig = plt.figure(figsize=(10, 4), dpi=100)
+        fig = register_figure(plt.figure(figsize=(10, 4), dpi=100))
         ax = fig.add_subplot(111)
         
         # Fiyat çizgisi
@@ -3645,7 +3790,7 @@ def draw_rek_dashboard(parent):
         draw_kpi(3, "KESİLEN REKLAMASYON", f"{t_rek_tut:,.0f} ₺", f"{df_d['Reklamasyon_Miktar'].sum():,.0f} Birim", "#8e44ad")
 
         chart_frame = tk.Frame(scrollable_frame, bg="#ecf0f1"); chart_frame.pack(fill="x", pady=10, padx=20)
-        fig = plt.figure(figsize=(10, 4), dpi=100)
+        fig = register_figure(plt.figure(figsize=(10, 4), dpi=100))
         ax1 = fig.add_subplot(121)
         if not df_d.empty:
             df_d.groupby("Cari Adı")[["Iade_Tutari", "Reklamasyon_Tutari"]].sum().sum(axis=1).sort_values(ascending=False).head(5).plot(kind="bar", ax=ax1, color="#e74c3c", alpha=0.8)
@@ -4201,7 +4346,7 @@ def init_rek_mail_tab():
             root.update()
 
             # 1. Grafiği Oluştur ve Kaydet
-            fig = plt.figure(figsize=(8, 4), dpi=100)
+            fig = register_figure(plt.figure(figsize=(8, 4), dpi=100))
             ax = fig.add_subplot(111)
             if df_reklamasyon_global is not None:
                 risk_data = df_reklamasyon_global.groupby("Order Grup Adı")[["Iade_Tutari", "Reklamasyon_Tutari"]].sum().sum(axis=1).sort_values(ascending=False).head(5)
@@ -4474,7 +4619,7 @@ def draw_dashboard(parent, stats=None, df=None):
         charts_frame = tk.Frame(main_frame, bg=bg_color)
         charts_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
-        fig = plt.figure(figsize=(12, 4), facecolor=bg_color)
+        fig = register_figure(plt.figure(figsize=(12, 4), facecolor=bg_color))
         gs = fig.add_gridspec(1, 2, wspace=0.3)
         
         ax1 = fig.add_subplot(gs[0, 0])
@@ -10767,6 +10912,9 @@ def show_page(page_name):
     global current_page_name
     current_page_name = page_name
     
+    # Önceki grafikleri temizle (Bellek sızıntısı önleme)
+    cleanup_matplotlib_figures()
+    
     # LOG: Sayfa ziyareti
     if activity_logger:
         activity_logger.log_page_visit(page_name)
@@ -11370,7 +11518,17 @@ comparison_frame = ttk.Frame(frame_karsilastirma); comparison_frame.pack(expand=
 def on_closing():
     """Uygulama kapatılırken kaynakları temizler ve güvenli çıkış sağlar."""
     try:
+        # Bekleyen logları kaydet
+        flush_activity_logs()
+        
+        # Ayarları kaydet
         save_settings()
+        
+        # Ticker animasyonunu durdur
+        stop_ticker_animation()
+        
+        # Tüm grafikleri temizle
+        cleanup_matplotlib_figures()
         
         # Klasör izlemeyi durdur
         if observer:
