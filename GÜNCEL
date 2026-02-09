@@ -3512,91 +3512,115 @@ def init_commodity_intelligence_tab():
         
         def _fetch():
             """Arka planda veri çeker"""
-            commodity_prices_global.clear()
-            
-            if YFINANCE_AVAILABLE:
-                try:
-                    # Pamuk (Cotton) - CT=F (ICEUS Cotton No.2)
-                    cotton_ticker = yf.Ticker("CT=F")
-                    cotton_hist = cotton_ticker.history(period="2d")
-                    
-                    if not cotton_hist.empty and len(cotton_hist) >= 1:
-                        cotton_current = cotton_hist['Close'].iloc[-1]
-                        cotton_previous = cotton_hist['Close'].iloc[-2] if len(cotton_hist) >= 2 else cotton_current * 0.99
+            try:
+                commodity_prices_global.clear()
+                
+                if YFINANCE_AVAILABLE:
+                    try:
+                        # Pamuk (Cotton) - CT=F (ICEUS Cotton No.2)
+                        cotton_ticker = yf.Ticker("CT=F")
+                        cotton_hist = cotton_ticker.history(period="2d")
                         
-                        commodity_prices_global['Pamuk (Cotlook A Index)'] = {
-                            'current': float(cotton_current),
-                            'previous': float(cotton_previous),
-                            'unit': 'USD/lb',
-                            'change': float(cotton_current - cotton_previous)
-                        }
-                        print(f"Pamuk fiyatı çekildi: {cotton_current:.2f} USD/lb")
-                    else:
-                        print("Pamuk fiyatı çekilemedi, varsayılan değer kullanılıyor")
+                        if not cotton_hist.empty and len(cotton_hist) >= 1:
+                            cotton_current = cotton_hist['Close'].iloc[-1]
+                            cotton_previous = cotton_hist['Close'].iloc[-2] if len(cotton_hist) >= 2 else cotton_current * 0.99
+                            
+                            commodity_prices_global['Pamuk (Cotlook A Index)'] = {
+                                'current': float(cotton_current),
+                                'previous': float(cotton_previous),
+                                'unit': 'USD/lb',
+                                'change': float(cotton_current - cotton_previous)
+                            }
+                            print(f"Pamuk fiyatı çekildi: {cotton_current:.2f} USD/lb")
+                        else:
+                            print("Pamuk fiyatı çekilemedi, varsayılan değer kullanılıyor")
+                            commodity_prices_global['Pamuk (Cotlook A Index)'] = {
+                                'current': 94.20,
+                                'previous': 92.50,
+                                'unit': 'USD/lb',
+                                'change': 1.7
+                            }
+                        
+                        # Polyester (PET) - Polyester için doğrudan ticker yok, tahmin kullanıyoruz
+                        # Petrol fiyatlarına bağlı olarak hareket eder
+                        try:
+                            oil_ticker = yf.Ticker("CL=F")  # Crude Oil WTI
+                            oil_hist = oil_ticker.history(period="2d")
+                            
+                            if not oil_hist.empty:
+                                oil_price = oil_hist['Close'].iloc[-1]
+                                # Polyester fiyatı yaklaşık olarak petrol fiyatına göre hesaplanır
+                                # 1 varil petrol ≈ 159 litre, polyester üretimi için maliyet faktörü
+                                polyester_base = 1200
+                                polyester_current = polyester_base + (float(oil_price) - 70) * 10
+                                polyester_previous = polyester_current * 0.98
+                                
+                                commodity_prices_global['Polyester'] = {
+                                    'current': float(polyester_current),
+                                    'previous': float(polyester_previous),
+                                    'unit': 'USD/ton',
+                                    'change': float(polyester_current - polyester_previous)
+                                }
+                                print(f"Polyester fiyatı hesaplandı: {polyester_current:.0f} USD/ton (Petrol: {oil_price:.2f})")
+                            else:
+                                raise Exception("Petrol fiyatı çekilemedi")
+                                
+                        except Exception as e:
+                            log_thread_error(e, context="fetch_real_commodity_data - Polyester price calculation", location="Line 3545")
+                            print(f"Polyester fiyatı hesaplanamadı: {e}, varsayılan değer kullanılıyor")
+                            commodity_prices_global['Polyester'] = {
+                                'current': 1350,
+                                'previous': 1420,
+                                'unit': 'USD/ton',
+                                'change': -70
+                            }
+                        
+                        # Viskon (Viscose) - Doğrudan ticker yok, pamuk fiyatına göre tahmin
+                        if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
+                            cotton_price_cents = commodity_prices_global['Pamuk (Cotlook A Index)']['current'] * 100  # cent/lb
+                            viscose_current = cotton_price_cents * 9.5  # Yaklaşık çarpan
+                            viscose_previous = viscose_current * 0.98
+                            
+                            commodity_prices_global['Viskon'] = {
+                                'current': float(viscose_current),
+                                'previous': float(viscose_previous),
+                                'unit': 'USD/ton',
+                                'change': float(viscose_current - viscose_previous)
+                            }
+                            print(f"Viskon fiyatı hesaplandı: {viscose_current:.0f} USD/ton")
+                        else:
+                            commodity_prices_global['Viskon'] = {
+                                'current': 2100,
+                                'previous': 2050,
+                                'unit': 'USD/ton',
+                                'change': 50
+                            }
+                            
+                    except Exception as e:
+                        log_thread_error(e, context="fetch_real_commodity_data - Real data fetch", location="Line 3518")
+                        print(f"Gerçek veri çekme hatası: {e}, varsayılan değerler kullanılıyor")
+                        # Hata durumunda varsayılan değerleri yükle
                         commodity_prices_global['Pamuk (Cotlook A Index)'] = {
                             'current': 94.20,
                             'previous': 92.50,
                             'unit': 'USD/lb',
                             'change': 1.7
                         }
-                    
-                    # Polyester (PET) - Polyester için doğrudan ticker yok, tahmin kullanıyoruz
-                    # Petrol fiyatlarına bağlı olarak hareket eder
-                    try:
-                        oil_ticker = yf.Ticker("CL=F")  # Crude Oil WTI
-                        oil_hist = oil_ticker.history(period="2d")
-                        
-                        if not oil_hist.empty:
-                            oil_price = oil_hist['Close'].iloc[-1]
-                            # Polyester fiyatı yaklaşık olarak petrol fiyatına göre hesaplanır
-                            # 1 varil petrol ≈ 159 litre, polyester üretimi için maliyet faktörü
-                            polyester_base = 1200
-                            polyester_current = polyester_base + (float(oil_price) - 70) * 10
-                            polyester_previous = polyester_current * 0.98
-                            
-                            commodity_prices_global['Polyester'] = {
-                                'current': float(polyester_current),
-                                'previous': float(polyester_previous),
-                                'unit': 'USD/ton',
-                                'change': float(polyester_current - polyester_previous)
-                            }
-                            print(f"Polyester fiyatı hesaplandı: {polyester_current:.0f} USD/ton (Petrol: {oil_price:.2f})")
-                        else:
-                            raise Exception("Petrol fiyatı çekilemedi")
-                            
-                    except Exception as e:
-                        print(f"Polyester fiyatı hesaplanamadı: {e}, varsayılan değer kullanılıyor")
                         commodity_prices_global['Polyester'] = {
                             'current': 1350,
                             'previous': 1420,
                             'unit': 'USD/ton',
                             'change': -70
                         }
-                    
-                    # Viskon (Viscose) - Doğrudan ticker yok, pamuk fiyatına göre tahmin
-                    if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
-                        cotton_price_cents = commodity_prices_global['Pamuk (Cotlook A Index)']['current'] * 100  # cent/lb
-                        viscose_current = cotton_price_cents * 9.5  # Yaklaşık çarpan
-                        viscose_previous = viscose_current * 0.98
-                        
-                        commodity_prices_global['Viskon'] = {
-                            'current': float(viscose_current),
-                            'previous': float(viscose_previous),
-                            'unit': 'USD/ton',
-                            'change': float(viscose_current - viscose_previous)
-                        }
-                        print(f"Viskon fiyatı hesaplandı: {viscose_current:.0f} USD/ton")
-                    else:
                         commodity_prices_global['Viskon'] = {
                             'current': 2100,
                             'previous': 2050,
                             'unit': 'USD/ton',
                             'change': 50
                         }
-                        
-                except Exception as e:
-                    print(f"Gerçek veri çekme hatası: {e}, varsayılan değerler kullanılıyor")
-                    # Hata durumunda varsayılan değerleri yükle
+                else:
+                    # yfinance kütüphanesi yoksa varsayılan değerler
+                    print("YFinance kütüphanesi yüklü değil, varsayılan değerler kullanılıyor")
                     commodity_prices_global['Pamuk (Cotlook A Index)'] = {
                         'current': 94.20,
                         'previous': 92.50,
@@ -3615,27 +3639,8 @@ def init_commodity_intelligence_tab():
                         'unit': 'USD/ton',
                         'change': 50
                     }
-            else:
-                # yfinance kütüphanesi yoksa varsayılan değerler
-                print("YFinance kütüphanesi yüklü değil, varsayılan değerler kullanılıyor")
-                commodity_prices_global['Pamuk (Cotlook A Index)'] = {
-                    'current': 94.20,
-                    'previous': 92.50,
-                    'unit': 'USD/lb',
-                    'change': 1.7
-                }
-                commodity_prices_global['Polyester'] = {
-                    'current': 1350,
-                    'previous': 1420,
-                    'unit': 'USD/ton',
-                    'change': -70
-                }
-                commodity_prices_global['Viskon'] = {
-                    'current': 2100,
-                    'previous': 2050,
-                    'unit': 'USD/ton',
-                    'change': 50
-                }
+            except Exception as e:
+                log_thread_error(e, context="fetch_real_commodity_data - Main _fetch function", location="Line 3513")
             
             # Geçmiş fiyat verisi oluştur (gerçek tarihsel veri veya simülasyon)
             commodity_history_global.clear()
@@ -3687,7 +3692,12 @@ def init_commodity_intelligence_tab():
                 print(f"UI güncelleme hatası: {e}")
         
         # Thread'de çalıştır
-        run_in_thread(_fetch, _update_ui)
+        run_in_thread(
+            _fetch, 
+            _update_ui,
+            context="fetch_real_commodity_data - Price and history fetch",
+            location="Line 3690"
+        )
     
     def update_price_cards():
         """Fiyat kartlarını günceller"""
