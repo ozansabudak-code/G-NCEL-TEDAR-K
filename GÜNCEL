@@ -2218,35 +2218,39 @@ def update_market_ticker():
         root.after(0, lambda: _update_label(usd_now, usd_prev, eur_now, eur_prev, brent_now, brent_prev))
 
     def _update_label(usd, usd_p, eur, eur_p, brent, brent_p):
-        usd_icon = "🔼" if usd >= usd_p else "🔽"
-        eur_icon = "🔼" if eur >= eur_p else "🔽"
-        brent_icon = "🔼" if brent >= brent_p else "🔽"
-        
-        # Hammadde fiyatlarını ekle (commodity_prices_global'den)
-        cotton_price = "94.20"
-        polyester_price = "1,350"
-        viscose_price = "2,100"
-        cotton_icon = "➖"
-        polyester_icon = "➖"
-        viscose_icon = "➖"
-        
-        if commodity_prices_global:
-            if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
-                cotton_data = commodity_prices_global['Pamuk (Cotlook A Index)']
-                cotton_price = f"{cotton_data['current']:.2f}"
-                cotton_icon = "🔼" if cotton_data['change'] >= 0 else "🔽"
-            if 'Polyester' in commodity_prices_global:
-                poly_data = commodity_prices_global['Polyester']
-                polyester_price = f"{poly_data['current']:,.0f}"
-                polyester_icon = "🔼" if poly_data['change'] >= 0 else "🔽"
-            if 'Viskon' in commodity_prices_global:
-                vis_data = commodity_prices_global['Viskon']
-                viscose_price = f"{vis_data['current']:,.0f}"
-                viscose_icon = "🔼" if vis_data['change'] >= 0 else "🔽"
-        
-        ticker_text = f"  💵 USD/TL: {usd:.4f} {usd_icon}   |   💶 EUR/TL: {eur:.4f} {eur_icon}   |   🛢️ BRENT: ${brent:.2f} {brent_icon}   |   🏭 PAMUK: ${cotton_price} {cotton_icon}   |   🧵 POLYESTER: ${polyester_price}/ton {polyester_icon}   |   🎀 VİSKON: ${viscose_price}/ton {viscose_icon}   |   🚢 BALTIC DRY: 1,450 🔼  "
-        if ticker_label:
-            ticker_label.configure(text=ticker_text)
+        try:
+            usd_icon = "🔼" if usd >= usd_p else "🔽"
+            eur_icon = "🔼" if eur >= eur_p else "🔽"
+            brent_icon = "🔼" if brent >= brent_p else "🔽"
+            
+            # Hammadde fiyatlarını ekle (commodity_prices_global'den)
+            cotton_price = "94.20"
+            polyester_price = "1,350"
+            viscose_price = "2,100"
+            cotton_icon = "➖"
+            polyester_icon = "➖"
+            viscose_icon = "➖"
+            
+            if commodity_prices_global:
+                if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
+                    cotton_data = commodity_prices_global['Pamuk (Cotlook A Index)']
+                    cotton_price = f"{cotton_data['current']:.2f}"
+                    cotton_icon = "🔼" if cotton_data['change'] >= 0 else "🔽"
+                if 'Polyester' in commodity_prices_global:
+                    poly_data = commodity_prices_global['Polyester']
+                    polyester_price = f"{poly_data['current']:,.0f}"
+                    polyester_icon = "🔼" if poly_data['change'] >= 0 else "🔽"
+                if 'Viskon' in commodity_prices_global:
+                    vis_data = commodity_prices_global['Viskon']
+                    viscose_price = f"{vis_data['current']:,.0f}"
+                    viscose_icon = "🔼" if vis_data['change'] >= 0 else "🔽"
+            
+            ticker_text = f"  💵 USD/TL: {usd:.4f} {usd_icon}   |   💶 EUR/TL: {eur:.4f} {eur_icon}   |   🛢️ BRENT: ${brent:.2f} {brent_icon}   |   🏭 PAMUK: ${cotton_price} {cotton_icon}   |   🧵 POLYESTER: ${polyester_price}/ton {polyester_icon}   |   🎀 VİSKON: ${viscose_price}/ton {viscose_icon}   |   🚢 BALTIC DRY: 1,450 🔼  "
+            if ticker_label:
+                ticker_label.configure(text=ticker_text)
+        except Exception as e:
+            # Widget geçersiz veya hata - sessizce devam et
+            print(f"Ticker label update error: {e}")
     
     threading.Thread(target=_fetch, daemon=True).start()
     
@@ -2260,15 +2264,25 @@ def scroll_ticker_animation():
     if not ticker_animation_active:
         return  # Durdurulmuşsa çalışma
     
-    if not ticker_label: 
-        return
-    
-    text = ticker_label.cget("text")
-    # İlk karakteri sona al
-    new_text = text[1:] + text[0]
-    ticker_label.configure(text=new_text)
-    # Hız ayarı (ms)
-    ticker_animation_job = root.after(200, scroll_ticker_animation)
+    try:
+        if not ticker_label: 
+            return
+        
+        text = ticker_label.cget("text")
+        # İlk karakteri sona al
+        new_text = text[1:] + text[0]
+        ticker_label.configure(text=new_text)
+        # Hız ayarı (ms)
+        ticker_animation_job = root.after(200, scroll_ticker_animation)
+    except Exception as e:
+        # Widget geçersiz veya hata - animasyonu durdur
+        print(f"Ticker animation error: {e}")
+        ticker_animation_active = False
+        if ticker_animation_job:
+            try:
+                root.after_cancel(ticker_animation_job)
+            except:
+                pass
 
 # ---------- HABERLER (RSS) FONKSİYONLARI ----------
 def init_news_tab():
