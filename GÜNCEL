@@ -2362,7 +2362,11 @@ def fetch_and_display_news(parent_frame):
     # --- ARAYÜZ GÜNCELLEME (Başarılı) ---
     def _update_ui_success(xml_data):
         try:
-            loading.destroy()
+            try:
+                loading.destroy()
+            except:
+                pass  # Widget artık geçerli değilse sessizce devam et
+            
             root_xml = ET.fromstring(xml_data)
             count = 0
             
@@ -2397,18 +2401,22 @@ def fetch_and_display_news(parent_frame):
         except Exception as e:
             # XML parse hatası
             _update_ui_error(f"XML Parse Hatası: {str(e)[:50]}...")
-            activity_logger.log_error(f"News XML parse hatası: {str(e)}", "Sektör Haberleri")
+            if activity_logger:
+                activity_logger.log_error(f"News XML parse hatası: {str(e)}", "Sektör Haberleri")
     
     # --- ARAYÜZ GÜNCELLEME (Hata) ---
     def _update_ui_error(error_message):
         """Hata mesajını ekranda göster"""
-        loading.configure(
-            text=f"❌ {error_message}\n\n💡 İpucu: VPN kullanmayı deneyin veya biraz bekleyip tekrar deneyin.",
-            fg="red",
-            font=("Segoe UI", 10),
-            wraplength=700,
-            justify="center"
-        )
+        try:
+            loading.configure(
+                text=f"❌ {error_message}\n\n💡 İpucu: VPN kullanmayı deneyin veya biraz bekleyip tekrar deneyin.",
+                fg="red",
+                font=("Segoe UI", 10),
+                wraplength=700,
+                justify="center"
+            )
+        except:
+            pass  # Widget artık geçerli değilse sessizce devam et
     
     # Thread'i başlat (daemon=True: ana program kapanınca otomatik sonlanır)
     threading.Thread(target=_bg_task, daemon=True).start()
@@ -2539,34 +2547,57 @@ def init_trend_hunter_tab():
                     current_score = last_row.max()
                     
                     analyze_trend_with_ai(top_trend, current_score, is_simulation=False)
-                    status_lbl.configure(text="✅ Veri başarıyla çekildi.")
+                    
+                    # Status label güncelleme - widget geçerli değilse hata verme
+                    try:
+                        status_lbl.configure(text="✅ Veri başarıyla çekildi.")
+                    except:
+                        pass  # Widget artık geçerli değilse sessizce devam et
                 else:
                     messagebox.showinfo("Bilgi", "Bu kelimeler için yeterli veri bulunamadı.")
-                    status_lbl.configure(text="Veri bulunamadı.")
+                    try:
+                        status_lbl.configure(text="Veri bulunamadı.")
+                    except:
+                        pass
             except Exception as parse_error:
                 messagebox.showerror("Hata", f"Veri işleme hatası: {str(parse_error)}")
-                status_lbl.configure(text="Veri işleme hatası.")
+                try:
+                    status_lbl.configure(text="Veri işleme hatası.")
+                except:
+                    pass
         
         # --- ARAYÜZ GÜNCELLEME (Hata) ---
         def _update_ui_error(error_msg):
-            # 429 hatası kontrolü (Rate Limit)
-            if "429" in error_msg or "Too Many Requests" in error_msg:
-                messagebox.showerror(
-                    "⏳ Google Rate Limit", 
-                    "Google Trends geçici olarak istekleri engelliyor.\n\n"
-                    "🔹 Çözüm 1: 1-2 saat bekleyip tekrar deneyin\n"
-                    "🔹 Çözüm 2: VPN kullanarak IP adresinizi değiştirin\n"
-                    "🔹 Çözüm 3: Simülasyon modunu kullanın (demo butonu)\n\n"
-                    "Not: Bu bir Google API limiti, kodla ilgili değil."
-                )
-                status_lbl.configure(text="⏳ Google Rate Limit - Lütfen 1-2 saat bekleyin")
-            else:
-                messagebox.showerror("Hata", f"Google Trends bağlantı hatası:\n{error_msg}\n\nİpucu: Simülasyon butonunu deneyebilirsiniz.")
-                status_lbl.configure(text="❌ Hata oluştu.")
-            
-            # Loglama
-            if activity_logger:
-                activity_logger.log_error(f"Google Trends hatası: {error_msg}", "Trend Avcısı")
+            try:
+                # 429 hatası kontrolü (Rate Limit)
+                if "429" in error_msg or "Too Many Requests" in error_msg:
+                    messagebox.showerror(
+                        "⏳ Google Rate Limit", 
+                        "Google Trends geçici olarak istekleri engelliyor.\n\n"
+                        "🔹 Çözüm 1: 1-2 saat bekleyip tekrar deneyin\n"
+                        "🔹 Çözüm 2: VPN kullanarak IP adresinizi değiştirin\n"
+                        "🔹 Çözüm 3: Simülasyon modunu kullanın (demo butonu)\n\n"
+                        "Not: Bu bir Google API limiti, kodla ilgili değil."
+                    )
+                    try:
+                        status_lbl.configure(text="⏳ Google Rate Limit - Lütfen 1-2 saat bekleyin")
+                    except:
+                        pass  # Widget artık geçerli değilse sessizce devam et
+                else:
+                    messagebox.showerror("Hata", f"Google Trends bağlantı hatası:\n{error_msg}\n\nİpucu: Simülasyon butonunu deneyebilirsiniz.")
+                    try:
+                        status_lbl.configure(text="❌ Hata oluştu.")
+                    except:
+                        pass
+                
+                # Loglama
+                if activity_logger:
+                    activity_logger.log_error(f"Google Trends hatası: {error_msg}", "Trend Avcısı")
+            except Exception as e:
+                # Eğer UI güncelleme sırasında hata olursa, en azından logla
+                print(f"UI güncelleme hatası: {e}")
+                if activity_logger:
+                    activity_logger.log_error(f"UI güncelleme hatası: {e}", "Trend Avcısı")
         
         # Arka plan thread'ini başlat (daemon=True: program kapanırken otomatik temizlenir)
         threading.Thread(target=_background_worker, daemon=True).start()
