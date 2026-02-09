@@ -11930,6 +11930,7 @@ def on_closing():
         if observer:
             try:
                 observer.stop()
+                observer.join(timeout=1)  # Wait up to 1 second for observer to stop
             except:
                 pass
         
@@ -11941,10 +11942,24 @@ def on_closing():
                 map_widget.destroy()
             except:
                 pass
+        
+        # Try to join any active threads with timeout
+        try:
+            import threading
+            active_threads = [t for t in threading.enumerate() if t != threading.main_thread() and t.is_alive()]
+            for thread in active_threads:
+                if hasattr(thread, 'join'):
+                    try:
+                        # Give each thread 0.1 seconds to finish
+                        thread.join(timeout=0.1)
+                    except:
+                        pass
+        except:
+            pass
 
-        # Give daemon threads a moment to finish
+        # Give daemon threads more time to finish (increased from 100ms to 300ms)
         # This prevents "Exception ignored in:" errors during garbage collection
-        root.after(100, lambda: _final_cleanup())
+        root.after(300, lambda: _final_cleanup())
         
     except Exception as e:
         print(f"Kapatma sırasında hata: {e}")
@@ -11954,8 +11969,31 @@ def on_closing():
 def _final_cleanup():
     """Final cleanup after giving threads time to finish"""
     try:
-        root.quit()     # Mainloop'tan çık
-        root.destroy()  # Pencereyi yok et
+        # Force garbage collection to clean up any remaining objects
+        import gc
+        gc.collect()
+        
+        # Suppress any remaining stderr output during final cleanup
+        import sys
+        import os
+        
+        # Save original stderr
+        original_stderr = sys.stderr
+        
+        try:
+            # Redirect stderr to devnull during cleanup
+            sys.stderr = open(os.devnull, 'w')
+            
+            root.quit()     # Mainloop'tan çık
+            root.destroy()  # Pencereyi yok et
+        finally:
+            # Restore stderr (if we get here)
+            try:
+                sys.stderr.close()
+                sys.stderr = original_stderr
+            except:
+                pass
+                
     except Exception as e:
         print(f"Final cleanup hatası: {e}")
         # Her durumda çıkmaya çalış
