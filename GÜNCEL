@@ -286,6 +286,9 @@ _active_figures = []
 ticker_animation_active = False
 ticker_animation_job = None
 
+# Market ticker control
+market_ticker_job = None
+
 # Activity log buffer
 _activity_log_buffer = []
 
@@ -2204,6 +2207,7 @@ def fetch_yahoo_finance_data(symbol):
 
 def update_market_ticker():
     """Piyasa verilerini günceller (Gerçek Veri - TCMB + Yahoo Finance)."""
+    global market_ticker_job
     
     # Thread içinde çalıştır ki arayüz donmasın
     def _fetch():
@@ -2269,7 +2273,7 @@ def update_market_ticker():
     threading.Thread(target=_fetch, daemon=True).start()
     
     # 60 saniyede bir güncelle
-    root.after(60000, update_market_ticker)
+    market_ticker_job = root.after(60000, update_market_ticker)
 
 def scroll_ticker_animation():
     """Metni kaydırarak ticker efekti verir."""
