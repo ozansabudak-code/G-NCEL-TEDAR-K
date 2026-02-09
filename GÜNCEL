@@ -3465,6 +3465,14 @@ def init_commodity_intelligence_tab():
                     status_label.configure(text="Veriler güncellendi")
             except:
                 pass  # Status label yoksa veya hata varsa sessizce devam et
+            
+            # Veri yüklendikten sonra UI'yi güncelle
+            try:
+                update_price_cards()
+                update_chart()
+                update_alerts()
+            except Exception as e:
+                print(f"UI güncelleme hatası: {e}")
         
         # Thread'de çalıştır
         run_in_thread(_fetch, _update_ui)
@@ -3473,6 +3481,11 @@ def init_commodity_intelligence_tab():
         """Fiyat kartlarını günceller"""
         for widget in cards_frame.winfo_children():
             widget.destroy()
+        
+        # Veri yüklenmemişse uyarı göster
+        if not commodity_prices_global:
+            tk.Label(cards_frame, text="Veri yükleniyor...", font=("Segoe UI", 12), fg="gray", bg="#ecf0f1").pack(pady=20)
+            return
         
         col = 0
         for commodity, data in commodity_prices_global.items():
@@ -3511,7 +3524,8 @@ def init_commodity_intelligence_tab():
         period_text = period_combo.get()
         period = int(period_text.split()[0])
         
-        if commodity not in commodity_history_global:
+        # Veri yüklenmemişse uyarı göster
+        if commodity not in commodity_history_global or commodity not in commodity_prices_global:
             tk.Label(chart_frame, text="Veri yükleniyor...", font=("Segoe UI", 12), fg="gray", bg="white").pack(expand=True)
             return
         
@@ -3578,10 +3592,9 @@ def init_commodity_intelligence_tab():
     
     def refresh_data():
         """Tüm verileri yeniler"""
+        # fetch_real_commodity_data artık asenkron çalışıyor ve
+        # tamamlandığında otomatik olarak UI'yi güncelliyor
         fetch_real_commodity_data()
-        update_price_cards()
-        update_chart()
-        update_alerts()
         
         if activity_logger:
             activity_logger.log_event("COMMODITY_DATA_REFRESH", "Emtia fiyatları güncellendi", "Hammadde İstihbaratı")
