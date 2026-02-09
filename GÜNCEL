@@ -2823,10 +2823,12 @@ def init_trend_hunter_tab():
                 
             except Exception as e:
                 # Hata oluştu - UI güncellemesi için ana thread'e gönder
+                # Lambda closure fix: Capture error immediately as default parameter
+                error_msg = str(e)
                 thread_safe_after(
                     root,
                     0,
-                    lambda: _update_ui_error(str(e)),
+                    lambda err=error_msg: _update_ui_error(err),
                     context="fetch_real_trends - Error callback", 
                     location="Line 2712"
                 )
@@ -6733,7 +6735,9 @@ def generate_order_rationale_gemini(product, qty, allocation_data):
         else:
             root.after(0, lambda: update_ai_text_widget(f"Hata: {response.status_code}"))
     except Exception as e:
-        root.after(0, lambda: update_ai_text_widget(f"Bağlantı Hatası: {str(e)}"))
+        # Lambda closure fix: Capture error immediately
+        error_msg = f"Bağlantı Hatası: {str(e)}"
+        root.after(0, lambda msg=error_msg: update_ai_text_widget(msg))
 
 def update_ai_text_widget(text):
     order_ai_text.configure(state="normal")
@@ -6917,7 +6921,9 @@ def run_negotiator_ai(target_discount, selected_tone):
                 root.after(0, lambda: _update_negotiator_ui(f"Hata: API Yanıt vermedi ({response.status_code})"))
                 
         except Exception as e:
-            root.after(0, lambda: _update_negotiator_ui(f"Bağlantı Hatası: {str(e)}"))
+            # Lambda closure fix: Capture error immediately
+            error_msg = f"Bağlantı Hatası: {str(e)}"
+            root.after(0, lambda msg=error_msg: _update_negotiator_ui(msg))
 
     threading.Thread(target=_thread_task, daemon=True).start()
 
@@ -7971,7 +7977,9 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         root.after(0, lambda: ai_status_label.configure(text="Hazır."))
         
     except Exception as e:
-        root.after(0, lambda: messagebox.showerror("Hata", str(e)))
+        # Lambda closure fix: Capture error immediately
+        error_msg = str(e)
+        root.after(0, lambda msg=error_msg: messagebox.showerror("Hata", msg))
         root.after(0, lambda: ai_status_label.configure(text="Hata"))
     finally:
         root.after(0, stop_loading_gif)
@@ -8030,12 +8038,16 @@ class MyEventHandler(FileSystemEventHandler):
                     if activity_logger:
                         activity_logger.log_event("AUTO_FILE_LOAD", f"Dosya: {os.path.basename(file_path)}, Stok sayısı: {len(unique_kodlar)}", "Analiz")
             except Exception as e:
-                root.after(0, lambda: set_status(f"Dosya yüklendi ama stok kodları çıkarılamadı: {str(e)}"))
+                # Lambda closure fix: Capture error immediately
+                error_msg = f"Dosya yüklendi ama stok kodları çıkarılamadı: {str(e)}"
+                root.after(0, lambda msg=error_msg: set_status(msg))
                 if activity_logger:
                     activity_logger.log_error(f"Stok kodu çıkarma hatası: {str(e)}", "Analiz")
                     
         except Exception as e:
-            root.after(0, lambda: set_status(f"Dosya yükleme hatası: {str(e)}"))
+            # Lambda closure fix: Capture error immediately
+            error_msg = f"Dosya yükleme hatası: {str(e)}"
+            root.after(0, lambda msg=error_msg: set_status(msg))
             if activity_logger:
                 activity_logger.log_error(f"Otomatik dosya yükleme hatası: {str(e)}", "Analiz")
 
