@@ -288,6 +288,9 @@ ticker_animation_job = None
 
 # Activity log buffer
 _activity_log_buffer = []
+
+# Shutdown flag - signals threads to stop
+_app_shutting_down = False
 _log_buffer_size = 10
 
 # MySQL connection pool
@@ -772,13 +775,24 @@ activity_logger = None
 def run_in_thread(target_func, callback=None, error_callback=None):
     """Thread-safe wrapper for background operations"""
     def _worker():
+        # Check if app is shutting down before doing work
+        if _app_shutting_down:
+            return
+            
         try:
             result = target_func()
-            if callback:
-                root.after(0, lambda: callback(result))
+            # Check again before callback
+            if not _app_shutting_down and callback:
+                try:
+                    root.after(0, lambda: callback(result))
+                except:
+                    pass  # Ignore if root is being destroyed
         except Exception as e:
-            if error_callback:
-                root.after(0, lambda: error_callback(e))
+            if not _app_shutting_down and error_callback:
+                try:
+                    root.after(0, lambda: error_callback(e))
+                except:
+                    pass  # Ignore if root is being destroyed
             else:
                 print(f"Thread error: {str(e)}")
     
@@ -11581,7 +11595,12 @@ comparison_frame = ttk.Frame(frame_karsilastirma); comparison_frame.pack(expand=
 
 def on_closing():
     """Uygulama kapatılırken kaynakları temizler ve güvenli çıkış sağlar."""
+    global _app_shutting_down
+    
     try:
+        # Signal all threads to stop
+        _app_shutting_down = True
+        
         # Bekleyen logları kaydet
         flush_activity_logs()
         
@@ -11610,10 +11629,22 @@ def on_closing():
             except:
                 pass
 
+        # Give daemon threads a moment to finish
+        # This prevents "Exception ignored in:" errors during garbage collection
+        root.after(100, lambda: _final_cleanup())
+        
+    except Exception as e:
+        print(f"Kapatma sırasında hata: {e}")
+        # Her durumda çıkmaya çalış
+        _final_cleanup()
+
+def _final_cleanup():
+    """Final cleanup after giving threads time to finish"""
+    try:
         root.quit()     # Mainloop'tan çık
         root.destroy()  # Pencereyi yok et
     except Exception as e:
-        print(f"Kapatma sırasında hata: {e}")
+        print(f"Final cleanup hatası: {e}")
         # Her durumda çıkmaya çalış
         try:
             import sys
