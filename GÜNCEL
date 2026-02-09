@@ -2020,7 +2020,13 @@ def mysql_query_dialog():
                 
                 global file_paths_global, all_stock_codes
                 file_paths_global = [temp_file]
-                root.after(0, lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."))
+                thread_safe_after(
+                    root, 
+                    0, 
+                    lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."),
+                    context="MySQL load from table - Status update",
+                    location="Line 2023"
+                )
                 
                 # Stok kodlarını çıkar
                 try:
@@ -2028,8 +2034,20 @@ def mysql_query_dialog():
                     if stok_col_temp:
                         unique_kodlar = sorted(df[stok_col_temp].dropna().unique())
                         all_stock_codes = ["Tüm Veri"] + list(unique_kodlar)
-                        root.after(0, lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"))
-                        root.after(0, lambda: stok_kod_combobox.set("Tüm Veri"))
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"),
+                            context="MySQL load from table - Configure combobox",
+                            location="Line 2031"
+                        )
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.set("Tüm Veri"),
+                            context="MySQL load from table - Set combobox value",
+                            location="Line 2032"
+                        )
                 except:
                     pass
         
@@ -2064,7 +2082,13 @@ def mysql_query_dialog():
                 
                 global file_paths_global, all_stock_codes
                 file_paths_global = [temp_file]
-                root.after(0, lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."),
+                    context="MySQL load from query - Status update",
+                    location="Line 2085"
+                )
                 
                 # Stok kodlarını çıkar
                 try:
@@ -2072,8 +2096,20 @@ def mysql_query_dialog():
                     if stok_col_temp:
                         unique_kodlar = sorted(df[stok_col_temp].dropna().unique())
                         all_stock_codes = ["Tüm Veri"] + list(unique_kodlar)
-                        root.after(0, lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"))
-                        root.after(0, lambda: stok_kod_combobox.set("Tüm Veri"))
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"),
+                            context="MySQL load from query - Configure combobox",
+                            location="Line 2093"
+                        )
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.set("Tüm Veri"),
+                            context="MySQL load from query - Set combobox value",
+                            location="Line 2094"
+                        )
                 except:
                     pass
         
@@ -2157,19 +2193,43 @@ def mysql_unified_data_loader():
                 
                 global file_paths_global, all_stock_codes
                 file_paths_global = [temp_file]
-                root.after(0, lambda: set_status(f"Tedarik Analiz: MySQL'den {len(df)} kayıt yüklendi."))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: set_status(f"Tedarik Analiz: MySQL'den {len(df)} kayıt yüklendi."),
+                    context="Tedarik analiz MySQL load - Status update",
+                    location="Line 2196"
+                )
                 
                 try:
                     stok_col_temp = find_stok_kodu_column(df)
                     if stok_col_temp:
                         unique_kodlar = sorted(df[stok_col_temp].dropna().unique())
                         all_stock_codes = ["Tüm Veri"] + list(unique_kodlar)
-                        root.after(0, lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"))
-                        root.after(0, lambda: stok_kod_combobox.set("Tüm Veri"))
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"),
+                            context="Tedarik analiz MySQL load - Configure combobox",
+                            location="Line 2203"
+                        )
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.set("Tüm Veri"),
+                            context="Tedarik analiz MySQL load - Set combobox value",
+                            location="Line 2204"
+                        )
                 except:
                     pass
                 
-                root.after(0, lambda: messagebox.showinfo("Başarılı", "Tedarik analiz verileri yüklendi!\nŞimdi 'ANALİZİ BAŞLAT' butonuna tıklayabilirsiniz."))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: messagebox.showinfo("Başarılı", "Tedarik analiz verileri yüklendi!\nŞimdi 'ANALİZİ BAŞLAT' butonuna tıklayabilirsiniz."),
+                    context="Tedarik analiz MySQL load - Success message",
+                    location="Line 2226"
+                )
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -2242,14 +2302,32 @@ def mysql_unified_data_loader():
                     
                     df_reklamasyon_global = df
                     
-                    root.after(0, lambda: messagebox.showinfo("Başarılı", 
-                        f"Reklamasyon verileri yüklendi: {len(df)} kayıt\n"
-                        "Reklamasyon sayfalarını görüntüleyebilirsiniz."))
-                    root.after(0, lambda: show_page("Rek Yönetici Özeti"))
+                    thread_safe_after(
+                        root,
+                        0,
+                        lambda: messagebox.showinfo("Başarılı", 
+                            f"Reklamasyon verileri yüklendi: {len(df)} kayıt\n"
+                            "Reklamasyon sayfalarını görüntüleyebilirsiniz."),
+                        context="Reklamasyon MySQL load - Success message",
+                        location="Line 2305"
+                    )
+                    thread_safe_after(
+                        root,
+                        0,
+                        lambda: show_page("Rek Yönetici Özeti"),
+                        context="Reklamasyon MySQL load - Show page",
+                        location="Line 2308"
+                    )
                     
                 except Exception as e:
-                    root.after(0, lambda: messagebox.showerror("Hata", 
-                        f"Reklamasyon verisi işlenirken hata:\n{str(e)}"))
+                    thread_safe_after(
+                        root,
+                        0,
+                        lambda: messagebox.showerror("Hata", 
+                            f"Reklamasyon verisi işlenirken hata:\n{str(e)}"),
+                        context="Reklamasyon MySQL load - Error message",
+                        location="Line 2311"
+                    )
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -2283,10 +2361,22 @@ def mysql_unified_data_loader():
                 global df_stok_global
                 df_stok_global = df
                 
-                root.after(0, lambda: messagebox.showinfo("Başarılı", 
-                    f"Stok verileri yüklendi: {len(df)} kayıt\n"
-                    "Stok Yönetimi sayfasını görüntüleyebilirsiniz."))
-                root.after(0, lambda: show_page("Stok Yönetimi"))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: messagebox.showinfo("Başarılı", 
+                        f"Stok verileri yüklendi: {len(df)} kayıt\n"
+                        "Stok Yönetimi sayfasını görüntüleyebilirsiniz."),
+                    context="Stok MySQL load - Success message",
+                    location="Line 2364"
+                )
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: show_page("Stok Yönetimi"),
+                    context="Stok MySQL load - Show page",
+                    location="Line 2367"
+                )
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -2527,17 +2617,35 @@ def fetch_and_display_news(parent_frame):
                 # Veri başarıyla geldi, ham XML içeriğini al
                 xml_content = response.content
                 # Arayüz güncellemesi için Ana Thread'e sinyal gönder
-                root.after(0, lambda: _update_ui_success(xml_content))
+                thread_safe_after(
+                    root, 
+                    0, 
+                    lambda: _update_ui_success(xml_content),
+                    context="News RSS - Success callback",
+                    location="Line 2530"
+                )
             else:
                 # HTTP Hatası (404, 429, 500 vb.)
                 error_msg = f"HTTP Hatası: {response.status_code}"
-                root.after(0, lambda: _update_ui_error(error_msg))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: _update_ui_error(error_msg),
+                    context="News RSS - HTTP error callback",
+                    location="Line 2534"
+                )
                 activity_logger.log_error(f"News RSS HTTP {response.status_code}", "Sektör Haberleri")
                 
         except Exception as e:
             # Bağlantı Hatası (Network, Timeout vb.)
             error_msg = f"Bağlantı Hatası: {str(e)}"
-            root.after(0, lambda: _update_ui_error(error_msg))
+            thread_safe_after(
+                root,
+                0,
+                lambda: _update_ui_error(error_msg),
+                context="News RSS - Connection error callback",
+                location="Line 2540"
+            )
             activity_logger.log_error(f"News RSS hatası: {str(e)}", "Sektör Haberleri")
 
     # --- ARAYÜZ GÜNCELLEME (Başarılı) ---
@@ -2705,11 +2813,23 @@ def init_trend_hunter_tab():
                 data = pytrends.interest_over_time()
                 
                 # Başarıyla veri geldi - UI güncellemesi için ana thread'e gönder
-                root.after(0, lambda: _update_ui_success(data, keywords))
+                thread_safe_after(
+                    root, 
+                    0, 
+                    lambda: _update_ui_success(data, keywords),
+                    context="fetch_real_trends - Success callback",
+                    location="Line 2708"
+                )
                 
             except Exception as e:
                 # Hata oluştu - UI güncellemesi için ana thread'e gönder
-                root.after(0, lambda: _update_ui_error(str(e)))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: _update_ui_error(str(e)),
+                    context="fetch_real_trends - Error callback", 
+                    location="Line 2712"
+                )
         
         # --- ARAYÜZ GÜNCELLEME (Başarılı) ---
         def _update_ui_success(data, kw_list):
