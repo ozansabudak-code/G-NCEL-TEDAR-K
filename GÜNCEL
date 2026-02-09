@@ -2642,7 +2642,7 @@ def init_trend_hunter_tab():
         import webbrowser
         webbrowser.open("https://trends.google.com.tr/home?geo=TR&hl=tr")
         if activity_logger:
-            activity_logger.log_activity("Google Trends web sayfası açıldı", "Trend Avcısı")
+            activity_logger.log_event("GOOGLE_TRENDS_OPEN", "Google Trends web sayfası açıldı", "Trend Avcısı")
     
     # Bilgi etiketi
     tk.Label(
@@ -7557,7 +7557,7 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         if stok_grup_col:
             # Pazar ortalamaları (kıyaslama için)
             market_averages_global = df_analiz.groupby(stok_grup_col)[[fiyat_col, teslim_col, iade_col]].mean()
-            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=False).apply(apply_scoring)
+            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=False).apply(apply_scoring, include_groups=False)
         else:
             sonuc_grouped = apply_scoring(sonuc_grouped)
 
@@ -8155,7 +8155,7 @@ def init_stok_tab():
             import webbrowser
             webbrowser.open(link)
             if activity_logger:
-                activity_logger.log_activity(f"{text} açıldı", "Defacto Üretim Raporları")
+                activity_logger.log_event("LINK_OPEN", f"{text} açıldı", "Defacto Üretim Raporları")
         
         btn = tk.Button(
             parent,
@@ -10887,7 +10887,7 @@ Tedarikçi Uyumluluk Merkezi"""
                             elif os.name == 'posix':  # macOS/Linux
                                 subprocess.call(['open', filepath])
                             if activity_logger:
-                                activity_logger.log_activity(f"Belge açıldı: {os.path.basename(filepath)}", 
+                                activity_logger.log_event("FILE_OPEN", f"Belge açıldı: {os.path.basename(filepath)}", 
                                                             "Tedarikçi Uyumluluk")
                         except Exception as e:
                             messagebox.showerror("Hata", f"Dosya açılırken hata oluştu:\n{str(e)}")
