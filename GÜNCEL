@@ -546,6 +546,15 @@ def debug_log(message, location="Unknown"):
     if DEBUG_MODE:
         timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
         thread_name = threading.current_thread().name
+        
+        # Sanitize thread name - remove special chars and limit length
+        # Replace problematic characters
+        thread_name = thread_name.replace('(', '[').replace(')', ']')
+        
+        # Limit length to 30 characters for readability
+        if len(thread_name) > 30:
+            thread_name = thread_name[:27] + "..."
+        
         print(f"[DEBUG {timestamp}] [{thread_name}] [{location}] {message}")
 
 # ---------- HATA LOGLAMA VE DEBUG SİSTEMİ ----------
@@ -2954,7 +2963,7 @@ def fetch_and_display_news(parent_frame):
             pass  # Widget artık geçerli değilse sessizce devam et
     
     # Thread'i başlat (daemon=True: ana program kapanınca otomatik sonlanır)
-    threading.Thread(target=_bg_task, daemon=True).start()
+    threading.Thread(target=_bg_task, daemon=True, name="NewsRSSThread").start()
 
 # ---------- TREND AVCISI (TREND HUNTER) FONKSİYONLARI ----------
 def init_trend_hunter_tab():
@@ -12429,7 +12438,8 @@ def auto_run_initial_analysis():
         
         # Analiz thread'ini başlat (filter_type="none", filter_value="" ile tüm veri)
         analysis_thread = threading.Thread(
-            target=lambda: analiz_et_with_options(file_paths_global, "none", "")
+            target=lambda: analiz_et_with_options(file_paths_global, "none", ""),
+            name="AutoAnalysisThread"
         )
         analysis_thread.daemon = True
         analysis_thread.start()
