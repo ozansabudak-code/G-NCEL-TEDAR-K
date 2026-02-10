@@ -302,10 +302,253 @@ _db_connection_pool = None
 # Analysis thread state tracking
 analysis_thread_running = False
 
-# ---------- HATA LOGLAMA VE DEBUG SİSTEMİ ----------
+# ---------- KAPSAMLI ÇÖKÜŞ TESPİT SİSTEMİ ----------
 import traceback
 import sys
 import threading
+import gc
+
+# Debug mode - Set to True for verbose logging
+DEBUG_MODE = True
+
+# Crash detection
+_crash_count = 0
+_last_crash_time = None
+
+def generate_crash_report(exc_type, exc_value, exc_traceback):
+    """
+    Çöküş raporu oluştur ve kaydet
+    Generate comprehensive crash report
+    """
+    global _crash_count, _last_crash_time
+    
+    _crash_count += 1
+    _last_crash_time = datetime.datetime.now()
+    
+    crash_time = _last_crash_time.strftime("%Y-%m-%d_%H-%M-%S")
+    crash_file = f"crash_report_{crash_time}.txt"
+    
+    # Detaylı crash raporu
+    crash_info = []
+    crash_info.append("=" * 80)
+    crash_info.append(f"ÇÖKÜŞ RAPORU / CRASH REPORT #{_crash_count}")
+    crash_info.append("=" * 80)
+    crash_info.append(f"Tarih/Date: {_last_crash_time.strftime('%Y-%m-%d %H:%M:%S.%f')}")
+    crash_info.append(f"Hata Tipi/Error Type: {exc_type.__name__}")
+    crash_info.append(f"Hata Mesajı/Error Message: {str(exc_value)}")
+    crash_info.append("")
+    
+    # Full traceback
+    crash_info.append("TAM TRACEBACK / FULL TRACEBACK:")
+    crash_info.append("-" * 80)
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+    crash_info.extend(tb_lines)
+    crash_info.append("")
+    
+    # Thread bilgisi
+    crash_info.append("THREAD BİLGİSİ / THREAD INFORMATION:")
+    crash_info.append("-" * 80)
+    crash_info.append(f"Ana Thread / Main Thread: {threading.main_thread().name}")
+    crash_info.append(f"Mevcut Thread / Current Thread: {threading.current_thread().name}")
+    crash_info.append(f"Thread ID: {threading.get_ident()}")
+    crash_info.append(f"Aktif Thread Sayısı / Active Threads: {threading.active_count()}")
+    crash_info.append("")
+    crash_info.append("Tüm Aktif Threadler / All Active Threads:")
+    for thread in threading.enumerate():
+        crash_info.append(f"  - {thread.name} (ID: {thread.ident}, Alive: {thread.is_alive()}, Daemon: {thread.daemon})")
+    crash_info.append("")
+    
+    # Local variables at crash point
+    crash_info.append("ÇÖKÜŞ NOKTASI DEĞİŞKENLER / CRASH POINT VARIABLES:")
+    crash_info.append("-" * 80)
+    if exc_traceback:
+        frame = exc_traceback.tb_frame
+        crash_info.append(f"Fonksiyon / Function: {frame.f_code.co_name}")
+        crash_info.append(f"Dosya / File: {frame.f_code.co_filename}")
+        crash_info.append(f"Satır / Line: {exc_traceback.tb_lineno}")
+        crash_info.append("")
+        crash_info.append("Yerel Değişkenler / Local Variables:")
+        for key, value in frame.f_locals.items():
+            try:
+                crash_info.append(f"  {key} = {repr(value)[:200]}")
+            except:
+                crash_info.append(f"  {key} = <repr failed>")
+    crash_info.append("")
+    
+    # Global state
+    crash_info.append("GLOBAL DURUM / GLOBAL STATE:")
+    crash_info.append("-" * 80)
+    crash_info.append(f"analysis_thread_running: {analysis_thread_running}")
+    crash_info.append(f"_app_shutting_down: {_app_shutting_down}")
+    crash_info.append(f"ticker_animation_active: {ticker_animation_active if 'ticker_animation_active' in globals() else 'N/A'}")
+    crash_info.append("")
+    
+    # Memory info
+    crash_info.append("BELLEK BİLGİSİ / MEMORY INFO:")
+    crash_info.append("-" * 80)
+    crash_info.append(f"Garbage Collector: {gc.isenabled()}")
+    crash_info.append(f"GC Counts: {gc.get_count()}")
+    crash_info.append(f"GC Threshold: {gc.get_threshold()}")
+    crash_info.append("")
+    
+    crash_info.append("=" * 80)
+    crash_info.append("RAPOR SONU / END OF REPORT")
+    crash_info.append("=" * 80)
+    
+    # Dosyaya yaz
+    try:
+        with open(crash_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(crash_info))
+        print(f"\n🔴 ÇÖKÜŞ RAPORU OLUŞTURULDU / CRASH REPORT CREATED: {crash_file}\n")
+    except Exception as e:
+        print(f"Crash report yazma hatası: {e}")
+    
+    # Konsola da yazdır
+    print('\n'.join(crash_info))
+    
+    return crash_file, '\n'.join(crash_info)
+
+def handle_exception(exc_type, exc_value, exc_traceback):
+    """
+    Global exception handler - TÜM yakalanmamış hataları yakala
+    """
+    # Ignore KeyboardInterrupt
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    
+    print("\n" + "!" * 80)
+    print("!!! YAKALANMAMIŞ HATA TESPİT EDİLDİ / UNHANDLED EXCEPTION DETECTED !!!")
+    print("!" * 80 + "\n")
+    
+    # Generate crash report
+    crash_file, crash_text = generate_crash_report(exc_type, exc_value, exc_traceback)
+    
+    # Try to show popup (if Tkinter is available and initialized)
+    try:
+        if 'root' in globals() and root.winfo_exists():
+            show_crash_dialog(exc_type, exc_value, exc_traceback, crash_file)
+    except:
+        pass
+    
+    # Call original exception handler
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+def show_crash_dialog(exc_type, exc_value, exc_traceback, crash_file):
+    """
+    Çöküş detaylarını gösteren popup dialog
+    """
+    try:
+        dialog = tk.Toplevel()
+        dialog.title("⚠️ PROGRAM ÇÖKTÜ / APPLICATION CRASHED")
+        dialog.geometry("700x500")
+        dialog.configure(bg='#ffebee')
+        
+        # Icon frame
+        icon_frame = tk.Frame(dialog, bg='#ffebee')
+        icon_frame.pack(pady=10)
+        
+        tk.Label(icon_frame, text="🔴", font=('Arial', 48), bg='#ffebee').pack()
+        
+        # Error message
+        msg_frame = tk.Frame(dialog, bg='#ffebee')
+        msg_frame.pack(pady=10, padx=20, fill='x')
+        
+        tk.Label(msg_frame, 
+                text="Program Beklenmedik Bir Hata İle Karşılaştı",
+                font=('Arial', 14, 'bold'),
+                bg='#ffebee',
+                fg='#c62828').pack()
+        
+        tk.Label(msg_frame,
+                text="The Application Encountered an Unexpected Error",
+                font=('Arial', 10),
+                bg='#ffebee',
+                fg='#d32f2f').pack()
+        
+        # Error details frame
+        details_frame = tk.LabelFrame(dialog, text="Hata Detayları / Error Details", 
+                                      bg='white', padx=10, pady=10)
+        details_frame.pack(pady=10, padx=20, fill='both', expand=True)
+        
+        # Scrollable text
+        text_widget = tk.Text(details_frame, wrap='word', height=15, width=80)
+        scrollbar = tk.Scrollbar(details_frame, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        # Error info
+        error_text = f"""Hata Tipi / Error Type:
+{exc_type.__name__}
+
+Hata Mesajı / Error Message:
+{str(exc_value)}
+
+Dosya / File:
+{exc_traceback.tb_frame.f_code.co_filename}
+
+Satır / Line:
+{exc_traceback.tb_lineno}
+
+Fonksiyon / Function:
+{exc_traceback.tb_frame.f_code.co_name}
+
+Detaylı Rapor / Detailed Report:
+{crash_file}
+
+Traceback:
+{"".join(traceback.format_exception(exc_type, exc_value, exc_traceback))}
+"""
+        
+        text_widget.insert('1.0', error_text)
+        text_widget.configure(state='disabled')
+        
+        text_widget.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        # Buttons frame
+        btn_frame = tk.Frame(dialog, bg='#ffebee')
+        btn_frame.pack(pady=10)
+        
+        def open_report():
+            try:
+                os.startfile(crash_file)
+            except:
+                webbrowser.open(crash_file)
+        
+        def copy_to_clipboard():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(error_text)
+            messagebox.showinfo("Başarılı", "Hata detayları panoya kopyalandı!")
+        
+        tk.Button(btn_frame, text="📄 Raporu Aç / Open Report", 
+                 command=open_report, 
+                 bg='#2196F3', fg='white', padx=20, pady=5).pack(side='left', padx=5)
+        
+        tk.Button(btn_frame, text="📋 Kopyala / Copy", 
+                 command=copy_to_clipboard,
+                 bg='#4CAF50', fg='white', padx=20, pady=5).pack(side='left', padx=5)
+        
+        tk.Button(btn_frame, text="❌ Kapat / Close", 
+                 command=dialog.destroy,
+                 bg='#f44336', fg='white', padx=20, pady=5).pack(side='left', padx=5)
+        
+        dialog.transient(root)
+        dialog.grab_set()
+        
+    except Exception as e:
+        print(f"Crash dialog gösterme hatası: {e}")
+
+# Global exception handler'ı ayarla
+sys.excepthook = handle_exception
+
+def debug_log(message, location="Unknown"):
+    """Debug logging when DEBUG_MODE is True"""
+    if DEBUG_MODE:
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        thread_name = threading.current_thread().name
+        print(f"[DEBUG {timestamp}] [{thread_name}] [{location}] {message}")
+
+# ---------- HATA LOGLAMA VE DEBUG SİSTEMİ ----------
 
 # Hata log dosyası
 ERROR_LOG_FILE = f"error_log_{datetime.date.today()}.log"
@@ -7711,22 +7954,38 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
     global df_global, tedarikci_col_global, phone_col_global, sonuc_global, message_global, grafik_ozet_global, outliers_global
     global stok_grup_col_global, detay_sonuc_global, market_averages_global, analysis_thread_running
     
+    debug_log("=== ANALİZ BAŞLADI / ANALYSIS STARTED ===", "analiz_et_with_options")
+    debug_log(f"Dosya sayısı: {len(dosyalar)}, Filtre: {filter_type}={filter_value}", "analiz_et_with_options")
+    
     # Set flag to indicate analysis is running
     analysis_thread_running = True
+    debug_log("analysis_thread_running = True", "analiz_et_with_options")
     
     try:
+        debug_log("Activity logger kontrolü...", "analiz_et_with_options")
         # LOG: Analiz başlatıldı
         if activity_logger:
             file_names = ", ".join([os.path.basename(f) for f in dosyalar])
             filter_desc = f"{filter_type}: {filter_value}" if filter_value else "Tümü"
             activity_logger.log_analysis("TEDARIKCI_ANALIZ", f"Dosyalar: {file_names}, Filtre: {filter_desc}", "Analiz")
+            debug_log(f"Activity log kaydedildi: {file_names}", "analiz_et_with_options")
         
+        debug_log("Usage log email thread başlatılıyor...", "analiz_et_with_options")
         threading.Thread(target=lambda: send_usage_log_email(f"Analiz: {len(dosyalar)} dosya")).start()
+        
+        debug_log("UI güncelleniyor (Okunuyor...)...", "analiz_et_with_options")
         root.after(0, lambda: ai_status_label.configure(text="Okunuyor..."))
         
+        debug_log("Dosyalar okunuyor...", "analiz_et_with_options")
         df_list = [pd.read_csv(f, dtype=str) if f.endswith('.csv') else pd.read_excel(f, dtype=str) for f in dosyalar]
+        debug_log(f"{len(df_list)} dosya okundu", "analiz_et_with_options")
+        
+        debug_log("DataFrame birleştiriliyor...", "analiz_et_with_options")
         df = pd.concat(df_list, ignore_index=True)
+        debug_log(f"Toplam satır sayısı: {len(df)}", "analiz_et_with_options")
+        
         df_global = df.copy()
+        debug_log("df_global kopyalandı", "analiz_et_with_options")
         
         # LOG: Veri yüklendi
         if activity_logger:
@@ -7982,16 +8241,31 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         root.after(0, lambda: show_page("Yönetim Paneli"))
         root.after(0, lambda: messagebox.showinfo("Tamam", "Analiz bitti."))
         root.after(0, lambda: ai_status_label.configure(text="Hazır."))
+        debug_log("=== ANALİZ BAŞARIYLA TAMAMLANDI / ANALYSIS COMPLETED ===", "analiz_et_with_options")
         
     except Exception as e:
+        debug_log(f"!!! ANALİZ HATA / ANALYSIS ERROR: {type(e).__name__}: {str(e)}", "analiz_et_with_options")
+        debug_log(f"Traceback: {traceback.format_exc()}", "analiz_et_with_options")
+        
+        # Log to error file
+        log_thread_error(e, 
+                        context="analiz_et_with_options - Main analysis function", 
+                        location=f"Line {sys.exc_info()[2].tb_lineno}")
+        
         # Lambda closure fix: Capture error immediately
         error_msg = str(e)
-        root.after(0, lambda msg=error_msg: messagebox.showerror("Hata", msg))
+        full_error = f"Analiz Hatası:\n\n{error_msg}\n\nDetaylar için error_log dosyasına bakın."
+        root.after(0, lambda msg=full_error: messagebox.showerror("Hata", msg))
         root.after(0, lambda: ai_status_label.configure(text="Hata"))
+        
+        debug_log("Hata mesajı kullanıcıya gösterildi", "analiz_et_with_options")
+        
     finally:
         # Clear running flag
+        debug_log("Finally bloğu - analysis_thread_running = False", "analiz_et_with_options")
         analysis_thread_running = False
         root.after(0, stop_loading_gif)
+        debug_log("=== ANALİZ FONKSİYONU BİTTİ / ANALYSIS FUNCTION ENDED ===", "analiz_et_with_options")
 
 def update_listbox(items):
     supplier_listbox.delete(0, tk.END); [supplier_listbox.insert(tk.END, i) for i in items]
@@ -8432,8 +8706,11 @@ def filter_stock_codes(event):
 def start_analysis_threaded():
     global file_paths_global, analysis_thread_running
     
+    debug_log(">>> start_analysis_threaded ÇAĞRILDI / CALLED", "start_analysis_threaded")
+    
     # Check if analysis is already running
     if analysis_thread_running:
+        debug_log("Analiz zaten çalışıyor, uyarı gösteriliyor", "start_analysis_threaded")
         messagebox.showwarning("Uyarı", 
             "⚠️ Bir analiz zaten çalışıyor!\n\n"
             "Lütfen mevcut analiz tamamlanana kadar bekleyin.\n\n"
@@ -8441,12 +8718,16 @@ def start_analysis_threaded():
         return
     
     if not file_paths_global:
+        debug_log("Dosya seçilmemiş, hata gösteriliyor", "start_analysis_threaded")
         messagebox.showerror("Hata", "Lütfen önce dosya seçin.")
         return
+    
+    debug_log(f"Dosya sayısı: {len(file_paths_global)}", "start_analysis_threaded")
     
     ai_progress_bar.pack(pady=10, fill="x")
     ai_progress_bar.start()
     play_loading_gif()
+    debug_log("Progress bar ve loading gif başlatıldı", "start_analysis_threaded")
 
     # Filtreleme tipini ve değerini al
     filter_type = analiz_filter_type_var.get()
@@ -8456,17 +8737,27 @@ def start_analysis_threaded():
         filter_value = stok_kod_combobox.get()
         if filter_value == "Tüm Veri":
             filter_value = ""
+        debug_log(f"Filtre tipi: stock_code, değer: {filter_value}", "start_analysis_threaded")
     elif filter_type == "stock_group":
         filter_value = stok_grup_filter_combobox.get()
         if filter_value == "Tüm Veri":
             filter_value = ""
+        debug_log(f"Filtre tipi: stock_group, değer: {filter_value}", "start_analysis_threaded")
+    else:
+        debug_log(f"Filtre tipi: {filter_type} (tüm veri)", "start_analysis_threaded")
     # filter_type == "none" için filter_value boş kalır
 
+    debug_log("Analiz thread'i oluşturuluyor...", "start_analysis_threaded")
     analysis_thread = threading.Thread(
-        target=lambda: analiz_et_with_options(file_paths_global, filter_type, filter_value)
+        target=lambda: analiz_et_with_options(file_paths_global, filter_type, filter_value),
+        name="AnalysisThread"
     )
     analysis_thread.daemon = True
+    debug_log(f"Thread oluşturuldu: {analysis_thread.name}, daemon={analysis_thread.daemon}", "start_analysis_threaded")
+    
     analysis_thread.start()
+    debug_log(f"Thread başlatıldı, ID: {analysis_thread.ident}", "start_analysis_threaded")
+    debug_log("<<< start_analysis_threaded BİTTİ / ENDED", "start_analysis_threaded")
 
 def export_all_data():
     global df_global
