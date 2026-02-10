@@ -278,6 +278,377 @@ frames = {}
 menu_buttons = {} 
 current_page_name = None
 
+# Performans Optimizasyonu Global Değişkenler
+# Matplotlib figure cache
+_active_figures = []
+
+# Ticker animation control
+ticker_animation_active = False
+ticker_animation_job = None
+
+# Market ticker control
+market_ticker_job = None
+
+# Activity log buffer
+_activity_log_buffer = []
+
+# Shutdown flag - signals threads to stop
+_app_shutting_down = False
+_log_buffer_size = 10
+
+# MySQL connection pool
+_db_connection_pool = None
+
+# Analysis thread state tracking
+analysis_thread_running = False
+
+# ---------- KAPSAMLI ÇÖKÜŞ TESPİT SİSTEMİ ----------
+import traceback
+import sys
+import threading
+import gc
+
+# Debug mode - Set to True for verbose logging
+DEBUG_MODE = True
+
+# Crash detection
+_crash_count = 0
+_last_crash_time = None
+
+def generate_crash_report(exc_type, exc_value, exc_traceback):
+    """
+    Çöküş raporu oluştur ve kaydet
+    Generate comprehensive crash report
+    """
+    global _crash_count, _last_crash_time
+    
+    _crash_count += 1
+    _last_crash_time = datetime.datetime.now()
+    
+    crash_time = _last_crash_time.strftime("%Y-%m-%d_%H-%M-%S")
+    crash_file = f"crash_report_{crash_time}.txt"
+    
+    # Detaylı crash raporu
+    crash_info = []
+    crash_info.append("=" * 80)
+    crash_info.append(f"ÇÖKÜŞ RAPORU / CRASH REPORT #{_crash_count}")
+    crash_info.append("=" * 80)
+    crash_info.append(f"Tarih/Date: {_last_crash_time.strftime('%Y-%m-%d %H:%M:%S.%f')}")
+    crash_info.append(f"Hata Tipi/Error Type: {exc_type.__name__}")
+    crash_info.append(f"Hata Mesajı/Error Message: {str(exc_value)}")
+    crash_info.append("")
+    
+    # Full traceback
+    crash_info.append("TAM TRACEBACK / FULL TRACEBACK:")
+    crash_info.append("-" * 80)
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+    crash_info.extend(tb_lines)
+    crash_info.append("")
+    
+    # Thread bilgisi
+    crash_info.append("THREAD BİLGİSİ / THREAD INFORMATION:")
+    crash_info.append("-" * 80)
+    crash_info.append(f"Ana Thread / Main Thread: {threading.main_thread().name}")
+    crash_info.append(f"Mevcut Thread / Current Thread: {threading.current_thread().name}")
+    crash_info.append(f"Thread ID: {threading.get_ident()}")
+    crash_info.append(f"Aktif Thread Sayısı / Active Threads: {threading.active_count()}")
+    crash_info.append("")
+    crash_info.append("Tüm Aktif Threadler / All Active Threads:")
+    for thread in threading.enumerate():
+        crash_info.append(f"  - {thread.name} (ID: {thread.ident}, Alive: {thread.is_alive()}, Daemon: {thread.daemon})")
+    crash_info.append("")
+    
+    # Local variables at crash point
+    crash_info.append("ÇÖKÜŞ NOKTASI DEĞİŞKENLER / CRASH POINT VARIABLES:")
+    crash_info.append("-" * 80)
+    if exc_traceback:
+        frame = exc_traceback.tb_frame
+        crash_info.append(f"Fonksiyon / Function: {frame.f_code.co_name}")
+        crash_info.append(f"Dosya / File: {frame.f_code.co_filename}")
+        crash_info.append(f"Satır / Line: {exc_traceback.tb_lineno}")
+        crash_info.append("")
+        crash_info.append("Yerel Değişkenler / Local Variables:")
+        for key, value in frame.f_locals.items():
+            try:
+                crash_info.append(f"  {key} = {repr(value)[:200]}")
+            except:
+                crash_info.append(f"  {key} = <repr failed>")
+    crash_info.append("")
+    
+    # Global state
+    crash_info.append("GLOBAL DURUM / GLOBAL STATE:")
+    crash_info.append("-" * 80)
+    crash_info.append(f"analysis_thread_running: {analysis_thread_running}")
+    crash_info.append(f"_app_shutting_down: {_app_shutting_down}")
+    crash_info.append(f"ticker_animation_active: {ticker_animation_active if 'ticker_animation_active' in globals() else 'N/A'}")
+    crash_info.append("")
+    
+    # Memory info
+    crash_info.append("BELLEK BİLGİSİ / MEMORY INFO:")
+    crash_info.append("-" * 80)
+    crash_info.append(f"Garbage Collector: {gc.isenabled()}")
+    crash_info.append(f"GC Counts: {gc.get_count()}")
+    crash_info.append(f"GC Threshold: {gc.get_threshold()}")
+    crash_info.append("")
+    
+    crash_info.append("=" * 80)
+    crash_info.append("RAPOR SONU / END OF REPORT")
+    crash_info.append("=" * 80)
+    
+    # Dosyaya yaz
+    try:
+        with open(crash_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(crash_info))
+        print(f"\n🔴 ÇÖKÜŞ RAPORU OLUŞTURULDU / CRASH REPORT CREATED: {crash_file}\n")
+    except Exception as e:
+        print(f"Crash report yazma hatası: {e}")
+    
+    # Konsola da yazdır
+    print('\n'.join(crash_info))
+    
+    return crash_file, '\n'.join(crash_info)
+
+def handle_exception(exc_type, exc_value, exc_traceback):
+    """
+    Global exception handler - TÜM yakalanmamış hataları yakala
+    """
+    # Ignore KeyboardInterrupt
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    
+    print("\n" + "!" * 80)
+    print("!!! YAKALANMAMIŞ HATA TESPİT EDİLDİ / UNHANDLED EXCEPTION DETECTED !!!")
+    print("!" * 80 + "\n")
+    
+    # Generate crash report
+    crash_file, crash_text = generate_crash_report(exc_type, exc_value, exc_traceback)
+    
+    # Try to show popup (if Tkinter is available and initialized)
+    try:
+        if 'root' in globals() and root.winfo_exists():
+            show_crash_dialog(exc_type, exc_value, exc_traceback, crash_file)
+    except:
+        pass
+    
+    # Call original exception handler
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+def show_crash_dialog(exc_type, exc_value, exc_traceback, crash_file):
+    """
+    Çöküş detaylarını gösteren popup dialog
+    """
+    try:
+        dialog = tk.Toplevel()
+        dialog.title("⚠️ PROGRAM ÇÖKTÜ / APPLICATION CRASHED")
+        dialog.geometry("700x500")
+        dialog.configure(bg='#ffebee')
+        
+        # Icon frame
+        icon_frame = tk.Frame(dialog, bg='#ffebee')
+        icon_frame.pack(pady=10)
+        
+        tk.Label(icon_frame, text="🔴", font=('Arial', 48), bg='#ffebee').pack()
+        
+        # Error message
+        msg_frame = tk.Frame(dialog, bg='#ffebee')
+        msg_frame.pack(pady=10, padx=20, fill='x')
+        
+        tk.Label(msg_frame, 
+                text="Program Beklenmedik Bir Hata İle Karşılaştı",
+                font=('Arial', 14, 'bold'),
+                bg='#ffebee',
+                fg='#c62828').pack()
+        
+        tk.Label(msg_frame,
+                text="The Application Encountered an Unexpected Error",
+                font=('Arial', 10),
+                bg='#ffebee',
+                fg='#d32f2f').pack()
+        
+        # Error details frame
+        details_frame = tk.LabelFrame(dialog, text="Hata Detayları / Error Details", 
+                                      bg='white', padx=10, pady=10)
+        details_frame.pack(pady=10, padx=20, fill='both', expand=True)
+        
+        # Scrollable text
+        text_widget = tk.Text(details_frame, wrap='word', height=15, width=80)
+        scrollbar = tk.Scrollbar(details_frame, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        # Error info
+        error_text = f"""Hata Tipi / Error Type:
+{exc_type.__name__}
+
+Hata Mesajı / Error Message:
+{str(exc_value)}
+
+Dosya / File:
+{exc_traceback.tb_frame.f_code.co_filename}
+
+Satır / Line:
+{exc_traceback.tb_lineno}
+
+Fonksiyon / Function:
+{exc_traceback.tb_frame.f_code.co_name}
+
+Detaylı Rapor / Detailed Report:
+{crash_file}
+
+Traceback:
+{"".join(traceback.format_exception(exc_type, exc_value, exc_traceback))}
+"""
+        
+        text_widget.insert('1.0', error_text)
+        text_widget.configure(state='disabled')
+        
+        text_widget.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        # Buttons frame
+        btn_frame = tk.Frame(dialog, bg='#ffebee')
+        btn_frame.pack(pady=10)
+        
+        def open_report():
+            try:
+                os.startfile(crash_file)
+            except:
+                webbrowser.open(crash_file)
+        
+        def copy_to_clipboard():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(error_text)
+            messagebox.showinfo("Başarılı", "Hata detayları panoya kopyalandı!")
+        
+        tk.Button(btn_frame, text="📄 Raporu Aç / Open Report", 
+                 command=open_report, 
+                 bg='#2196F3', fg='white', padx=20, pady=5).pack(side='left', padx=5)
+        
+        tk.Button(btn_frame, text="📋 Kopyala / Copy", 
+                 command=copy_to_clipboard,
+                 bg='#4CAF50', fg='white', padx=20, pady=5).pack(side='left', padx=5)
+        
+        tk.Button(btn_frame, text="❌ Kapat / Close", 
+                 command=dialog.destroy,
+                 bg='#f44336', fg='white', padx=20, pady=5).pack(side='left', padx=5)
+        
+        dialog.transient(root)
+        dialog.grab_set()
+        
+    except Exception as e:
+        print(f"Crash dialog gösterme hatası: {e}")
+
+# Global exception handler'ı ayarla
+sys.excepthook = handle_exception
+
+def debug_log(message, location="Unknown"):
+    """Debug logging when DEBUG_MODE is True"""
+    if DEBUG_MODE:
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        thread_name = threading.current_thread().name
+        
+        # Sanitize thread name - remove special chars and limit length
+        # Replace problematic characters
+        thread_name = thread_name.replace('(', '[').replace(')', ']')
+        
+        # Limit length to 30 characters for readability
+        if len(thread_name) > 30:
+            thread_name = thread_name[:27] + "..."
+        
+        print(f"[DEBUG {timestamp}] [{thread_name}] [{location}] {message}")
+
+# ---------- HATA LOGLAMA VE DEBUG SİSTEMİ ----------
+
+# Hata log dosyası
+ERROR_LOG_FILE = f"error_log_{datetime.date.today()}.log"
+
+def log_thread_error(error, context="", location=""):
+    """
+    Thread hatalarını detaylı şekilde loglar
+    Args:
+        error: Exception nesnesi
+        context: Hatanın bağlamı (örn: "update_market_ticker")
+        location: Hatanın yeri (örn: "Line 2249")
+    """
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    thread_id = threading.current_thread().ident
+    thread_name = threading.current_thread().name
+    
+    error_info = {
+        'timestamp': timestamp,
+        'thread_id': thread_id,
+        'thread_name': thread_name,
+        'error_type': type(error).__name__,
+        'error_message': str(error),
+        'context': context,
+        'location': location,
+        'traceback': traceback.format_exc()
+    }
+    
+    # Console'a yazdır
+    print(f"\n{'='*80}")
+    print(f"[HATA] {timestamp} | Thread: {thread_name} (ID: {thread_id})")
+    print(f"[KONUM] {location}")
+    print(f"[BAĞLAM] {context}")
+    print(f"[TİP] {type(error).__name__}")
+    print(f"[MESAJ] {str(error)}")
+    print(f"[TRACEBACK]\n{traceback.format_exc()}")
+    print(f"{'='*80}\n")
+    
+    # Dosyaya yaz
+    try:
+        with open(ERROR_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"TIMESTAMP: {timestamp}\n")
+            f.write(f"THREAD: {thread_name} (ID: {thread_id})\n")
+            f.write(f"LOCATION: {location}\n")
+            f.write(f"CONTEXT: {context}\n")
+            f.write(f"ERROR TYPE: {type(error).__name__}\n")
+            f.write(f"ERROR MESSAGE: {str(error)}\n")
+            f.write(f"TRACEBACK:\n{traceback.format_exc()}\n")
+            f.write(f"{'='*80}\n\n")
+    except Exception as log_error:
+        print(f"Log yazma hatası: {log_error}")
+
+def safe_ui_call(func, context="", location=""):
+    """
+    UI çağrılarını güvenli şekilde yapar ve hataları loglar
+    Args:
+        func: Çağrılacak fonksiyon
+        context: İşlem bağlamı
+        location: Kod konumu
+    """
+    try:
+        return func()
+    except Exception as e:
+        log_thread_error(e, context=context, location=location)
+        return None
+
+def thread_safe_after(root, delay, func, context="", location=""):
+    """
+    root.after() çağrılarını thread-safe ve hata loglamalı yapar
+    Args:
+        root: Tkinter root penceresi
+        delay: Gecikme (ms)
+        func: Çağrılacak fonksiyon
+        context: İşlem bağlamı
+        location: Kod konumu
+    """
+    def wrapped_func():
+        try:
+            if _app_shutting_down:
+                return
+            func()
+        except Exception as e:
+            log_thread_error(e, context=f"after callback: {context}", location=location)
+    
+    try:
+        if not _app_shutting_down:
+            return root.after(delay, wrapped_func)
+    except Exception as e:
+        log_thread_error(e, context=f"root.after failed: {context}", location=location)
+        return None
+
 # ---------- GELİŞMİŞ LOGLAMa VE AKTİVİTE TAKİP SİSTEMİ ----------
 class ActivityLogger:
     """Detaylı kullanıcı aktivite loglama ve raporlama sistemi"""
@@ -752,6 +1123,175 @@ class ActivityLogger:
 
 # Global activity logger
 activity_logger = None
+
+# ---------- PERFORMANS OPTİMİZASYONU YARDIMCI FONKSİYONLAR ----------
+def run_in_thread(target_func, callback=None, error_callback=None, context="", location=""):
+    """
+    Thread-safe wrapper for background operations with comprehensive error logging
+    Args:
+        target_func: Function to run in background
+        callback: Function to call with result (runs on main thread via root.after)
+        error_callback: Function to call on error (runs on main thread via root.after)
+        context: Description of what this thread does (for error logging)
+        location: Code location (for error logging)
+    """
+    def _worker():
+        # Check if app is shutting down before doing work
+        if _app_shutting_down:
+            return
+        
+        func_name = getattr(target_func, '__name__', 'unknown_function')
+        thread_context = context or f"run_in_thread: {func_name}"
+        thread_location = location or "run_in_thread wrapper"
+        
+        try:
+            result = target_func()
+            # Check again before callback
+            if not _app_shutting_down and callback:
+                try:
+                    root.after(0, lambda: safe_ui_call(
+                        lambda: callback(result),
+                        context=f"{thread_context} - callback",
+                        location=thread_location
+                    ))
+                except Exception as after_error:
+                    log_thread_error(
+                        after_error,
+                        context=f"{thread_context} - root.after callback",
+                        location=thread_location
+                    )
+        except Exception as e:
+            log_thread_error(
+                e,
+                context=f"{thread_context} - worker error",
+                location=thread_location
+            )
+            
+            if not _app_shutting_down and error_callback:
+                try:
+                    root.after(0, lambda: safe_ui_call(
+                        lambda: error_callback(e),
+                        context=f"{thread_context} - error_callback",
+                        location=thread_location
+                    ))
+                except Exception as error_after:
+                    log_thread_error(
+                        error_after,
+                        context=f"{thread_context} - root.after error_callback",
+                        location=thread_location
+                    )
+    
+    thread = threading.Thread(target=_worker, daemon=True, name=context or "BackgroundThread")
+    thread.start()
+    return thread
+
+def cleanup_matplotlib_figures():
+    """Tüm aktif matplotlib figurelerini temizle"""
+    global _active_figures
+    for fig in _active_figures:
+        try:
+            plt.close(fig)
+        except:
+            pass
+    _active_figures.clear()
+
+def register_figure(fig):
+    """Yeni figure'ı kaydet"""
+    global _active_figures
+    _active_figures.append(fig)
+    return fig
+
+def start_ticker_animation():
+    """Ticker animasyonunu başlat"""
+    global ticker_animation_active
+    ticker_animation_active = True
+    scroll_ticker_animation()
+
+def stop_ticker_animation():
+    """Ticker animasyonunu durdur"""
+    global ticker_animation_active, ticker_animation_job
+    ticker_animation_active = False
+    if ticker_animation_job:
+        try:
+            root.after_cancel(ticker_animation_job)
+        except:
+            pass
+        ticker_animation_job = None
+
+def stop_market_ticker():
+    """Market ticker güncellemelerini durdur"""
+    global market_ticker_job
+    if market_ticker_job:
+        try:
+            root.after_cancel(market_ticker_job)
+        except:
+            pass
+        market_ticker_job = None
+
+def get_db_connection():
+    """Bağlantı havuzundan bağlantı al"""
+    global _db_connection_pool
+    
+    if not MYSQL_AVAILABLE:
+        return None
+    
+    if _db_connection_pool is None:
+        try:
+            from mysql.connector import pooling
+            # MYSQL_CONFIG kontrolü
+            if not all([MYSQL_CONFIG.get("host"), MYSQL_CONFIG.get("user"), MYSQL_CONFIG.get("database")]):
+                return None
+            
+            _db_connection_pool = pooling.MySQLConnectionPool(
+                pool_name="tedarik_pool",
+                pool_size=5,
+                host=MYSQL_CONFIG["host"],
+                user=MYSQL_CONFIG["user"],
+                password=MYSQL_CONFIG["password"],
+                database=MYSQL_CONFIG["database"]
+            )
+        except Exception as e:
+            print(f"Connection pool error: {e}")
+            return None
+    
+    try:
+        return _db_connection_pool.get_connection()
+    except Exception as e:
+        print(f"Get connection error: {e}")
+        return None
+
+def flush_activity_logs():
+    """Buffer'daki tüm logları veritabanına yaz"""
+    global _activity_log_buffer
+    
+    if not _activity_log_buffer:
+        return
+    
+    def _write():
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor()
+                for log in _activity_log_buffer:
+                    try:
+                        cursor.execute(
+                            "INSERT INTO activity_logs (user, action, details, timestamp) VALUES (%s, %s, %s, %s)",
+                            (log["user"], log["action"], log["details"], log["timestamp"])
+                        )
+                    except:
+                        pass  # Tablo yoksa veya hata varsa sessizce devam et
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except:
+                pass
+    
+    # Thread'de çalıştır
+    try:
+        run_in_thread(_write)
+    except:
+        pass
+    _activity_log_buffer.clear()
 
 # ---------- BACKUP VE GERİ YÜKLEME SİSTEMİ ----------
 def create_backup():
@@ -1568,7 +2108,7 @@ def show_recent_items_menu():
 # ---------- MYSQL BAĞLANTI FONKSİYONLARI ----------
 def create_mysql_connection():
     """
-    MySQL bağlantısı oluşturur.
+    MySQL bağlantısı oluşturur (Connection pool kullanır).
     
     Returns:
         connection: MySQL bağlantı nesnesi veya None
@@ -1583,19 +2123,15 @@ def create_mysql_connection():
         return None
     
     try:
-        connection = mysql.connector.connect(
-            host=MYSQL_CONFIG["host"],
-            user=MYSQL_CONFIG["user"],
-            password=MYSQL_CONFIG["password"],
-            database=MYSQL_CONFIG["database"],
-            raise_on_warnings=MYSQL_CONFIG.get("raise_on_warnings", True)
-        )
+        # Connection pool kullan (performans optimizasyonu)
+        connection = get_db_connection()
         
-        if connection.is_connected():
+        if connection and connection.is_connected():
             if activity_logger:
                 activity_logger.log_event("MYSQL_CONNECT", f"Başarıyla bağlandı: {MYSQL_CONFIG['database']}", "MySQL")
             return connection
-    except mysql.connector.Error as err:
+        return None
+    except Exception as err:
         error_msg = f"MySQL bağlantı hatası: {err}"
         messagebox.showerror("MySQL Hatası", error_msg)
         if activity_logger:
@@ -1739,7 +2275,13 @@ def mysql_query_dialog():
                 
                 global file_paths_global, all_stock_codes
                 file_paths_global = [temp_file]
-                root.after(0, lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."))
+                thread_safe_after(
+                    root, 
+                    0, 
+                    lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."),
+                    context="MySQL load from table - Status update",
+                    location="Line 2023"
+                )
                 
                 # Stok kodlarını çıkar
                 try:
@@ -1747,8 +2289,20 @@ def mysql_query_dialog():
                     if stok_col_temp:
                         unique_kodlar = sorted(df[stok_col_temp].dropna().unique())
                         all_stock_codes = ["Tüm Veri"] + list(unique_kodlar)
-                        root.after(0, lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"))
-                        root.after(0, lambda: stok_kod_combobox.set("Tüm Veri"))
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"),
+                            context="MySQL load from table - Configure combobox",
+                            location="Line 2031"
+                        )
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.set("Tüm Veri"),
+                            context="MySQL load from table - Set combobox value",
+                            location="Line 2032"
+                        )
                 except:
                     pass
         
@@ -1783,7 +2337,13 @@ def mysql_query_dialog():
                 
                 global file_paths_global, all_stock_codes
                 file_paths_global = [temp_file]
-                root.after(0, lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: set_status(f"MySQL'den {len(df)} kayıt yüklendi."),
+                    context="MySQL load from query - Status update",
+                    location="Line 2085"
+                )
                 
                 # Stok kodlarını çıkar
                 try:
@@ -1791,8 +2351,20 @@ def mysql_query_dialog():
                     if stok_col_temp:
                         unique_kodlar = sorted(df[stok_col_temp].dropna().unique())
                         all_stock_codes = ["Tüm Veri"] + list(unique_kodlar)
-                        root.after(0, lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"))
-                        root.after(0, lambda: stok_kod_combobox.set("Tüm Veri"))
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"),
+                            context="MySQL load from query - Configure combobox",
+                            location="Line 2093"
+                        )
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.set("Tüm Veri"),
+                            context="MySQL load from query - Set combobox value",
+                            location="Line 2094"
+                        )
                 except:
                     pass
         
@@ -1876,19 +2448,43 @@ def mysql_unified_data_loader():
                 
                 global file_paths_global, all_stock_codes
                 file_paths_global = [temp_file]
-                root.after(0, lambda: set_status(f"Tedarik Analiz: MySQL'den {len(df)} kayıt yüklendi."))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: set_status(f"Tedarik Analiz: MySQL'den {len(df)} kayıt yüklendi."),
+                    context="Tedarik analiz MySQL load - Status update",
+                    location="Line 2196"
+                )
                 
                 try:
                     stok_col_temp = find_stok_kodu_column(df)
                     if stok_col_temp:
                         unique_kodlar = sorted(df[stok_col_temp].dropna().unique())
                         all_stock_codes = ["Tüm Veri"] + list(unique_kodlar)
-                        root.after(0, lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"))
-                        root.after(0, lambda: stok_kod_combobox.set("Tüm Veri"))
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.configure(values=all_stock_codes, state="normal"),
+                            context="Tedarik analiz MySQL load - Configure combobox",
+                            location="Line 2203"
+                        )
+                        thread_safe_after(
+                            root,
+                            0,
+                            lambda: stok_kod_combobox.set("Tüm Veri"),
+                            context="Tedarik analiz MySQL load - Set combobox value",
+                            location="Line 2204"
+                        )
                 except:
                     pass
                 
-                root.after(0, lambda: messagebox.showinfo("Başarılı", "Tedarik analiz verileri yüklendi!\nŞimdi 'ANALİZİ BAŞLAT' butonuna tıklayabilirsiniz."))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: messagebox.showinfo("Başarılı", "Tedarik analiz verileri yüklendi!\nŞimdi 'ANALİZİ BAŞLAT' butonuna tıklayabilirsiniz."),
+                    context="Tedarik analiz MySQL load - Success message",
+                    location="Line 2226"
+                )
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -1961,14 +2557,32 @@ def mysql_unified_data_loader():
                     
                     df_reklamasyon_global = df
                     
-                    root.after(0, lambda: messagebox.showinfo("Başarılı", 
-                        f"Reklamasyon verileri yüklendi: {len(df)} kayıt\n"
-                        "Reklamasyon sayfalarını görüntüleyebilirsiniz."))
-                    root.after(0, lambda: show_page("Rek Yönetici Özeti"))
+                    thread_safe_after(
+                        root,
+                        0,
+                        lambda: messagebox.showinfo("Başarılı", 
+                            f"Reklamasyon verileri yüklendi: {len(df)} kayıt\n"
+                            "Reklamasyon sayfalarını görüntüleyebilirsiniz."),
+                        context="Reklamasyon MySQL load - Success message",
+                        location="Line 2305"
+                    )
+                    thread_safe_after(
+                        root,
+                        0,
+                        lambda: show_page("Rek Yönetici Özeti"),
+                        context="Reklamasyon MySQL load - Show page",
+                        location="Line 2308"
+                    )
                     
                 except Exception as e:
-                    root.after(0, lambda: messagebox.showerror("Hata", 
-                        f"Reklamasyon verisi işlenirken hata:\n{str(e)}"))
+                    thread_safe_after(
+                        root,
+                        0,
+                        lambda: messagebox.showerror("Hata", 
+                            f"Reklamasyon verisi işlenirken hata:\n{str(e)}"),
+                        context="Reklamasyon MySQL load - Error message",
+                        location="Line 2311"
+                    )
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -2002,10 +2616,22 @@ def mysql_unified_data_loader():
                 global df_stok_global
                 df_stok_global = df
                 
-                root.after(0, lambda: messagebox.showinfo("Başarılı", 
-                    f"Stok verileri yüklendi: {len(df)} kayıt\n"
-                    "Stok Yönetimi sayfasını görüntüleyebilirsiniz."))
-                root.after(0, lambda: show_page("Stok Yönetimi"))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: messagebox.showinfo("Başarılı", 
+                        f"Stok verileri yüklendi: {len(df)} kayıt\n"
+                        "Stok Yönetimi sayfasını görüntüleyebilirsiniz."),
+                    context="Stok MySQL load - Success message",
+                    location="Line 2364"
+                )
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: show_page("Stok Yönetimi"),
+                    context="Stok MySQL load - Show page",
+                    location="Line 2367"
+                )
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -2066,78 +2692,109 @@ def fetch_yahoo_finance_data(symbol):
 
 def update_market_ticker():
     """Piyasa verilerini günceller (Gerçek Veri - TCMB + Yahoo Finance)."""
+    global market_ticker_job
     
     # Thread içinde çalıştır ki arayüz donmasın
     def _fetch():
-        # TCMB'den döviz kurları
-        usd_now, eur_now = fetch_tcmb_currency()
-        
-        # Yahoo Finance'den Brent petrol
-        brent_now, brent_prev = fetch_yahoo_finance_data("BZ=F")
-        
-        # Fallback değerler - TCMB başarısız olursa Yahoo Finance dene
-        if usd_now is None or eur_now is None:
-            usd_yf, usd_prev = fetch_yahoo_finance_data("USDTRY=X")
-            eur_yf, eur_prev = fetch_yahoo_finance_data("EURTRY=X")
-            if usd_now is None: usd_now, usd_prev = usd_yf if usd_yf else 36.50, 36.40
-            else: usd_prev = usd_now * 0.998  # Yaklaşık önceki değer
-            if eur_now is None: eur_now, eur_prev = eur_yf if eur_yf else 38.20, 38.10
-            else: eur_prev = eur_now * 0.998
-        else:
-            # TCMB başarılı, önceki değerleri tahmin et
-            usd_prev = usd_now * 0.998
-            eur_prev = eur_now * 0.998
-        
-        if brent_now is None: brent_now, brent_prev = 78.40, 78.00
-        
-        # Arayüz güncelleme
-        root.after(0, lambda: _update_label(usd_now, usd_prev, eur_now, eur_prev, brent_now, brent_prev))
+        try:
+            # TCMB'den döviz kurları
+            usd_now, eur_now = fetch_tcmb_currency()
+            
+            # Yahoo Finance'den Brent petrol
+            brent_now, brent_prev = fetch_yahoo_finance_data("BZ=F")
+            
+            # Fallback değerler - TCMB başarısız olursa Yahoo Finance dene
+            if usd_now is None or eur_now is None:
+                usd_yf, usd_prev = fetch_yahoo_finance_data("USDTRY=X")
+                eur_yf, eur_prev = fetch_yahoo_finance_data("EURTRY=X")
+                if usd_now is None: usd_now, usd_prev = usd_yf if usd_yf else 36.50, 36.40
+                else: usd_prev = usd_now * 0.998  # Yaklaşık önceki değer
+                if eur_now is None: eur_now, eur_prev = eur_yf if eur_yf else 38.20, 38.10
+                else: eur_prev = eur_now * 0.998
+            else:
+                # TCMB başarılı, önceki değerleri tahmin et
+                usd_prev = usd_now * 0.998
+                eur_prev = eur_now * 0.998
+            
+            if brent_now is None: brent_now, brent_prev = 78.40, 78.00
+            
+            # Arayüz güncelleme - Thread-safe
+            thread_safe_after(
+                root, 0,
+                lambda: _update_label(usd_now, usd_prev, eur_now, eur_prev, brent_now, brent_prev),
+                context="update_market_ticker - label update",
+                location="Line 2376"
+            )
+        except Exception as e:
+            log_thread_error(e, context="update_market_ticker - data fetch", location="Line 2348")
 
     def _update_label(usd, usd_p, eur, eur_p, brent, brent_p):
-        usd_icon = "🔼" if usd >= usd_p else "🔽"
-        eur_icon = "🔼" if eur >= eur_p else "🔽"
-        brent_icon = "🔼" if brent >= brent_p else "🔽"
-        
-        # Hammadde fiyatlarını ekle (commodity_prices_global'den)
-        cotton_price = "94.20"
-        polyester_price = "1,350"
-        viscose_price = "2,100"
-        cotton_icon = "➖"
-        polyester_icon = "➖"
-        viscose_icon = "➖"
-        
-        if commodity_prices_global:
-            if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
-                cotton_data = commodity_prices_global['Pamuk (Cotlook A Index)']
-                cotton_price = f"{cotton_data['current']:.2f}"
-                cotton_icon = "🔼" if cotton_data['change'] >= 0 else "🔽"
-            if 'Polyester' in commodity_prices_global:
-                poly_data = commodity_prices_global['Polyester']
-                polyester_price = f"{poly_data['current']:,.0f}"
-                polyester_icon = "🔼" if poly_data['change'] >= 0 else "🔽"
-            if 'Viskon' in commodity_prices_global:
-                vis_data = commodity_prices_global['Viskon']
-                viscose_price = f"{vis_data['current']:,.0f}"
-                viscose_icon = "🔼" if vis_data['change'] >= 0 else "🔽"
-        
-        ticker_text = f"  💵 USD/TL: {usd:.4f} {usd_icon}   |   💶 EUR/TL: {eur:.4f} {eur_icon}   |   🛢️ BRENT: ${brent:.2f} {brent_icon}   |   🏭 PAMUK: ${cotton_price} {cotton_icon}   |   🧵 POLYESTER: ${polyester_price}/ton {polyester_icon}   |   🎀 VİSKON: ${viscose_price}/ton {viscose_icon}   |   🚢 BALTIC DRY: 1,450 🔼  "
-        if ticker_label:
-            ticker_label.configure(text=ticker_text)
+        try:
+            usd_icon = "🔼" if usd >= usd_p else "🔽"
+            eur_icon = "🔼" if eur >= eur_p else "🔽"
+            brent_icon = "🔼" if brent >= brent_p else "🔽"
+            
+            # Hammadde fiyatlarını ekle (commodity_prices_global'den)
+            cotton_price = "94.20"
+            polyester_price = "1,350"
+            viscose_price = "2,100"
+            cotton_icon = "➖"
+            polyester_icon = "➖"
+            viscose_icon = "➖"
+            
+            if commodity_prices_global:
+                if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
+                    cotton_data = commodity_prices_global['Pamuk (Cotlook A Index)']
+                    cotton_price = f"{cotton_data['current']:.2f}"
+                    cotton_icon = "🔼" if cotton_data['change'] >= 0 else "🔽"
+                if 'Polyester' in commodity_prices_global:
+                    poly_data = commodity_prices_global['Polyester']
+                    polyester_price = f"{poly_data['current']:,.0f}"
+                    polyester_icon = "🔼" if poly_data['change'] >= 0 else "🔽"
+                if 'Viskon' in commodity_prices_global:
+                    vis_data = commodity_prices_global['Viskon']
+                    viscose_price = f"{vis_data['current']:,.0f}"
+                    viscose_icon = "🔼" if vis_data['change'] >= 0 else "🔽"
+            
+            ticker_text = f"  💵 USD/TL: {usd:.4f} {usd_icon}   |   💶 EUR/TL: {eur:.4f} {eur_icon}   |   🛢️ BRENT: ${brent:.2f} {brent_icon}   |   🏭 PAMUK: ${cotton_price} {cotton_icon}   |   🧵 POLYESTER: ${polyester_price}/ton {polyester_icon}   |   🎀 VİSKON: ${viscose_price}/ton {viscose_icon}   |   🚢 BALTIC DRY: 1,450 🔼  "
+            if ticker_label:
+                ticker_label.configure(text=ticker_text)
+        except Exception as e:
+            # Widget geçersiz veya hata - logla
+            log_thread_error(e, context="update_market_ticker - ticker_label update", location="Line 2407")
+            print(f"Ticker label update error: {e}")
     
     threading.Thread(target=_fetch, daemon=True).start()
     
     # 60 saniyede bir güncelle
-    root.after(60000, update_market_ticker)
+    market_ticker_job = root.after(60000, update_market_ticker)
 
 def scroll_ticker_animation():
     """Metni kaydırarak ticker efekti verir."""
-    if not ticker_label: return
-    text = ticker_label.cget("text")
-    # İlk karakteri sona al
-    new_text = text[1:] + text[0]
-    ticker_label.configure(text=new_text)
-    # Hız ayarı (ms)
-    root.after(200, scroll_ticker_animation)
+    global ticker_animation_active, ticker_animation_job
+    
+    if not ticker_animation_active:
+        return  # Durdurulmuşsa çalışma
+    
+    try:
+        if not ticker_label: 
+            return
+        
+        text = ticker_label.cget("text")
+        # İlk karakteri sona al
+        new_text = text[1:] + text[0]
+        ticker_label.configure(text=new_text)
+        # Hız ayarı (ms)
+        ticker_animation_job = root.after(200, scroll_ticker_animation)
+    except Exception as e:
+        # Widget geçersiz veya hata - animasyonu durdur
+        print(f"Ticker animation error: {e}")
+        ticker_animation_active = False
+        if ticker_animation_job:
+            try:
+                root.after_cancel(ticker_animation_job)
+            except:
+                pass
 
 # ---------- HABERLER (RSS) FONKSİYONLARI ----------
 def init_news_tab():
@@ -2215,23 +2872,45 @@ def fetch_and_display_news(parent_frame):
                 # Veri başarıyla geldi, ham XML içeriğini al
                 xml_content = response.content
                 # Arayüz güncellemesi için Ana Thread'e sinyal gönder
-                root.after(0, lambda: _update_ui_success(xml_content))
+                thread_safe_after(
+                    root, 
+                    0, 
+                    lambda: _update_ui_success(xml_content),
+                    context="News RSS - Success callback",
+                    location="Line 2530"
+                )
             else:
                 # HTTP Hatası (404, 429, 500 vb.)
                 error_msg = f"HTTP Hatası: {response.status_code}"
-                root.after(0, lambda: _update_ui_error(error_msg))
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda: _update_ui_error(error_msg),
+                    context="News RSS - HTTP error callback",
+                    location="Line 2534"
+                )
                 activity_logger.log_error(f"News RSS HTTP {response.status_code}", "Sektör Haberleri")
                 
         except Exception as e:
             # Bağlantı Hatası (Network, Timeout vb.)
             error_msg = f"Bağlantı Hatası: {str(e)}"
-            root.after(0, lambda: _update_ui_error(error_msg))
+            thread_safe_after(
+                root,
+                0,
+                lambda: _update_ui_error(error_msg),
+                context="News RSS - Connection error callback",
+                location="Line 2540"
+            )
             activity_logger.log_error(f"News RSS hatası: {str(e)}", "Sektör Haberleri")
 
     # --- ARAYÜZ GÜNCELLEME (Başarılı) ---
     def _update_ui_success(xml_data):
         try:
-            loading.destroy()
+            try:
+                loading.destroy()
+            except:
+                pass  # Widget artık geçerli değilse sessizce devam et
+            
             root_xml = ET.fromstring(xml_data)
             count = 0
             
@@ -2266,21 +2945,25 @@ def fetch_and_display_news(parent_frame):
         except Exception as e:
             # XML parse hatası
             _update_ui_error(f"XML Parse Hatası: {str(e)[:50]}...")
-            activity_logger.log_error(f"News XML parse hatası: {str(e)}", "Sektör Haberleri")
+            if activity_logger:
+                activity_logger.log_error(f"News XML parse hatası: {str(e)}", "Sektör Haberleri")
     
     # --- ARAYÜZ GÜNCELLEME (Hata) ---
     def _update_ui_error(error_message):
         """Hata mesajını ekranda göster"""
-        loading.configure(
-            text=f"❌ {error_message}\n\n💡 İpucu: VPN kullanmayı deneyin veya biraz bekleyip tekrar deneyin.",
-            fg="red",
-            font=("Segoe UI", 10),
-            wraplength=700,
-            justify="center"
-        )
+        try:
+            loading.configure(
+                text=f"❌ {error_message}\n\n💡 İpucu: VPN kullanmayı deneyin veya biraz bekleyip tekrar deneyin.",
+                fg="red",
+                font=("Segoe UI", 10),
+                wraplength=700,
+                justify="center"
+            )
+        except:
+            pass  # Widget artık geçerli değilse sessizce devam et
     
     # Thread'i başlat (daemon=True: ana program kapanınca otomatik sonlanır)
-    threading.Thread(target=_bg_task, daemon=True).start()
+    threading.Thread(target=_bg_task, daemon=True, name="NewsRSSThread").start()
 
 # ---------- TREND AVCISI (TREND HUNTER) FONKSİYONLARI ----------
 def init_trend_hunter_tab():
@@ -2385,11 +3068,25 @@ def init_trend_hunter_tab():
                 data = pytrends.interest_over_time()
                 
                 # Başarıyla veri geldi - UI güncellemesi için ana thread'e gönder
-                root.after(0, lambda: _update_ui_success(data, keywords))
+                thread_safe_after(
+                    root, 
+                    0, 
+                    lambda: _update_ui_success(data, keywords),
+                    context="fetch_real_trends - Success callback",
+                    location="Line 2708"
+                )
                 
             except Exception as e:
                 # Hata oluştu - UI güncellemesi için ana thread'e gönder
-                root.after(0, lambda: _update_ui_error(str(e)))
+                # Lambda closure fix: Capture error immediately as default parameter
+                error_msg = str(e)
+                thread_safe_after(
+                    root,
+                    0,
+                    lambda err=error_msg: _update_ui_error(err),
+                    context="fetch_real_trends - Error callback", 
+                    location="Line 2712"
+                )
         
         # --- ARAYÜZ GÜNCELLEME (Başarılı) ---
         def _update_ui_success(data, kw_list):
@@ -2408,34 +3105,57 @@ def init_trend_hunter_tab():
                     current_score = last_row.max()
                     
                     analyze_trend_with_ai(top_trend, current_score, is_simulation=False)
-                    status_lbl.configure(text="✅ Veri başarıyla çekildi.")
+                    
+                    # Status label güncelleme - widget geçerli değilse hata verme
+                    try:
+                        status_lbl.configure(text="✅ Veri başarıyla çekildi.")
+                    except:
+                        pass  # Widget artık geçerli değilse sessizce devam et
                 else:
                     messagebox.showinfo("Bilgi", "Bu kelimeler için yeterli veri bulunamadı.")
-                    status_lbl.configure(text="Veri bulunamadı.")
+                    try:
+                        status_lbl.configure(text="Veri bulunamadı.")
+                    except:
+                        pass
             except Exception as parse_error:
                 messagebox.showerror("Hata", f"Veri işleme hatası: {str(parse_error)}")
-                status_lbl.configure(text="Veri işleme hatası.")
+                try:
+                    status_lbl.configure(text="Veri işleme hatası.")
+                except:
+                    pass
         
         # --- ARAYÜZ GÜNCELLEME (Hata) ---
         def _update_ui_error(error_msg):
-            # 429 hatası kontrolü (Rate Limit)
-            if "429" in error_msg or "Too Many Requests" in error_msg:
-                messagebox.showerror(
-                    "⏳ Google Rate Limit", 
-                    "Google Trends geçici olarak istekleri engelliyor.\n\n"
-                    "🔹 Çözüm 1: 1-2 saat bekleyip tekrar deneyin\n"
-                    "🔹 Çözüm 2: VPN kullanarak IP adresinizi değiştirin\n"
-                    "🔹 Çözüm 3: Simülasyon modunu kullanın (demo butonu)\n\n"
-                    "Not: Bu bir Google API limiti, kodla ilgili değil."
-                )
-                status_lbl.configure(text="⏳ Google Rate Limit - Lütfen 1-2 saat bekleyin")
-            else:
-                messagebox.showerror("Hata", f"Google Trends bağlantı hatası:\n{error_msg}\n\nİpucu: Simülasyon butonunu deneyebilirsiniz.")
-                status_lbl.configure(text="❌ Hata oluştu.")
-            
-            # Loglama
-            if activity_logger:
-                activity_logger.log_error(f"Google Trends hatası: {error_msg}", "Trend Avcısı")
+            try:
+                # 429 hatası kontrolü (Rate Limit)
+                if "429" in error_msg or "Too Many Requests" in error_msg:
+                    messagebox.showerror(
+                        "⏳ Google Rate Limit", 
+                        "Google Trends geçici olarak istekleri engelliyor.\n\n"
+                        "🔹 Çözüm 1: 1-2 saat bekleyip tekrar deneyin\n"
+                        "🔹 Çözüm 2: VPN kullanarak IP adresinizi değiştirin\n"
+                        "🔹 Çözüm 3: Simülasyon modunu kullanın (demo butonu)\n\n"
+                        "Not: Bu bir Google API limiti, kodla ilgili değil."
+                    )
+                    try:
+                        status_lbl.configure(text="⏳ Google Rate Limit - Lütfen 1-2 saat bekleyin")
+                    except:
+                        pass  # Widget artık geçerli değilse sessizce devam et
+                else:
+                    messagebox.showerror("Hata", f"Google Trends bağlantı hatası:\n{error_msg}\n\nİpucu: Simülasyon butonunu deneyebilirsiniz.")
+                    try:
+                        status_lbl.configure(text="❌ Hata oluştu.")
+                    except:
+                        pass
+                
+                # Loglama
+                if activity_logger:
+                    activity_logger.log_error(f"Google Trends hatası: {error_msg}", "Trend Avcısı")
+            except Exception as e:
+                # Eğer UI güncelleme sırasında hata olursa, en azından logla
+                print(f"UI güncelleme hatası: {e}")
+                if activity_logger:
+                    activity_logger.log_error(f"UI güncelleme hatası: {e}", "Trend Avcısı")
         
         # Arka plan thread'ini başlat (daemon=True: program kapanırken otomatik temizlenir)
         threading.Thread(target=_background_worker, daemon=True).start()
@@ -2480,7 +3200,7 @@ def init_trend_hunter_tab():
         import webbrowser
         webbrowser.open("https://trends.google.com.tr/home?geo=TR&hl=tr")
         if activity_logger:
-            activity_logger.log_activity("Google Trends web sayfası açıldı", "Trend Avcısı")
+            activity_logger.log_event("GOOGLE_TRENDS_OPEN", "Google Trends web sayfası açıldı", "Trend Avcısı")
     
     # Bilgi etiketi
     tk.Label(
@@ -2522,7 +3242,7 @@ def init_trend_hunter_tab():
     def update_trend_chart(dates, data_dict):
         for widget in chart_frame.winfo_children(): widget.destroy()
         
-        fig = plt.figure(figsize=(8, 4), dpi=100)
+        fig = register_figure(plt.figure(figsize=(8, 4), dpi=100))
         ax = fig.add_subplot(111)
         
         for label, values in data_dict.items():
@@ -2817,7 +3537,7 @@ def init_google_trending_tab():
         for widget in chart_frame.winfo_children():
             widget.destroy()
         
-        fig = plt.figure(figsize=(12, 5), dpi=100)
+        fig = register_figure(plt.figure(figsize=(12, 5), dpi=100))
         ax = fig.add_subplot(111)
         
         # Grafik çiz
@@ -3006,7 +3726,7 @@ def init_production_pipeline_tab():
                     font=("Segoe UI", 12), fg="gray", bg="white").pack(expand=True)
             return
         
-        fig = plt.figure(figsize=(10, 6), dpi=100)
+        fig = register_figure(plt.figure(figsize=(10, 6), dpi=100))
         ax = fig.add_subplot(111)
         
         stages = ['İplik → Kumaş', 'Boyama', 'Paketleme', 'Sevkiyat']
@@ -3160,168 +3880,211 @@ def init_commodity_intelligence_tab():
         """Gerçek emtia fiyatlarını Yahoo Finance'den çeker"""
         global YFINANCE_AVAILABLE
         
-        commodity_prices_global.clear()
+        # Yükleniyor durumu göster (isteğe bağlı - yoksa devam et)
+        try:
+            if 'status_label' in globals() and status_label:
+                status_label.configure(text="Hammadde verileri yükleniyor...")
+        except:
+            pass  # Status label yoksa veya hata varsa sessizce devam et
         
-        if YFINANCE_AVAILABLE:
+        def _fetch():
+            """Arka planda veri çeker"""
             try:
-                # Pamuk (Cotton) - CT=F (ICEUS Cotton No.2)
-                cotton_ticker = yf.Ticker("CT=F")
-                cotton_hist = cotton_ticker.history(period="2d")
+                commodity_prices_global.clear()
                 
-                if not cotton_hist.empty and len(cotton_hist) >= 1:
-                    cotton_current = cotton_hist['Close'].iloc[-1]
-                    cotton_previous = cotton_hist['Close'].iloc[-2] if len(cotton_hist) >= 2 else cotton_current * 0.99
-                    
-                    commodity_prices_global['Pamuk (Cotlook A Index)'] = {
-                        'current': float(cotton_current),
-                        'previous': float(cotton_previous),
-                        'unit': 'USD/lb',
-                        'change': float(cotton_current - cotton_previous)
-                    }
-                    print(f"Pamuk fiyatı çekildi: {cotton_current:.2f} USD/lb")
+                if YFINANCE_AVAILABLE:
+                    try:
+                        # Pamuk (Cotton) - CT=F (ICEUS Cotton No.2)
+                        cotton_ticker = yf.Ticker("CT=F")
+                        cotton_hist = cotton_ticker.history(period="2d")
+                        
+                        if not cotton_hist.empty and len(cotton_hist) >= 1:
+                            cotton_current = cotton_hist['Close'].iloc[-1]
+                            cotton_previous = cotton_hist['Close'].iloc[-2] if len(cotton_hist) >= 2 else cotton_current * 0.99
+                            
+                            commodity_prices_global['Pamuk (Cotlook A Index)'] = {
+                                'current': float(cotton_current),
+                                'previous': float(cotton_previous),
+                                'unit': 'USD/lb',
+                                'change': float(cotton_current - cotton_previous)
+                            }
+                            print(f"Pamuk fiyatı çekildi: {cotton_current:.2f} USD/lb")
+                        else:
+                            print("Pamuk fiyatı çekilemedi, varsayılan değer kullanılıyor")
+                            commodity_prices_global['Pamuk (Cotlook A Index)'] = {
+                                'current': 94.20,
+                                'previous': 92.50,
+                                'unit': 'USD/lb',
+                                'change': 1.7
+                            }
+                        
+                        # Polyester (PET) - Polyester için doğrudan ticker yok, tahmin kullanıyoruz
+                        # Petrol fiyatlarına bağlı olarak hareket eder
+                        try:
+                            oil_ticker = yf.Ticker("CL=F")  # Crude Oil WTI
+                            oil_hist = oil_ticker.history(period="2d")
+                            
+                            if not oil_hist.empty:
+                                oil_price = oil_hist['Close'].iloc[-1]
+                                # Polyester fiyatı yaklaşık olarak petrol fiyatına göre hesaplanır
+                                # 1 varil petrol ≈ 159 litre, polyester üretimi için maliyet faktörü
+                                polyester_base = 1200
+                                polyester_current = polyester_base + (float(oil_price) - 70) * 10
+                                polyester_previous = polyester_current * 0.98
+                                
+                                commodity_prices_global['Polyester'] = {
+                                    'current': float(polyester_current),
+                                    'previous': float(polyester_previous),
+                                    'unit': 'USD/ton',
+                                    'change': float(polyester_current - polyester_previous)
+                                }
+                                print(f"Polyester fiyatı hesaplandı: {polyester_current:.0f} USD/ton (Petrol: {oil_price:.2f})")
+                            else:
+                                raise Exception("Petrol fiyatı çekilemedi")
+                                
+                        except Exception as e:
+                            log_thread_error(e, context="fetch_real_commodity_data - Polyester price calculation", location="Line 3545")
+                            print(f"Polyester fiyatı hesaplanamadı: {e}, varsayılan değer kullanılıyor")
+                            commodity_prices_global['Polyester'] = {
+                                'current': 1350,
+                                'previous': 1420,
+                                'unit': 'USD/ton',
+                                'change': -70
+                            }
+                        
+                        # Viskon (Viscose) - Doğrudan ticker yok, pamuk fiyatına göre tahmin
+                        if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
+                            cotton_price_cents = commodity_prices_global['Pamuk (Cotlook A Index)']['current'] * 100  # cent/lb
+                            viscose_current = cotton_price_cents * 9.5  # Yaklaşık çarpan
+                            viscose_previous = viscose_current * 0.98
+                            
+                            commodity_prices_global['Viskon'] = {
+                                'current': float(viscose_current),
+                                'previous': float(viscose_previous),
+                                'unit': 'USD/ton',
+                                'change': float(viscose_current - viscose_previous)
+                            }
+                            print(f"Viskon fiyatı hesaplandı: {viscose_current:.0f} USD/ton")
+                        else:
+                            commodity_prices_global['Viskon'] = {
+                                'current': 2100,
+                                'previous': 2050,
+                                'unit': 'USD/ton',
+                                'change': 50
+                            }
+                            
+                    except Exception as e:
+                        log_thread_error(e, context="fetch_real_commodity_data - Real data fetch", location="Line 3518")
+                        print(f"Gerçek veri çekme hatası: {e}, varsayılan değerler kullanılıyor")
+                        # Hata durumunda varsayılan değerleri yükle
+                        commodity_prices_global['Pamuk (Cotlook A Index)'] = {
+                            'current': 94.20,
+                            'previous': 92.50,
+                            'unit': 'USD/lb',
+                            'change': 1.7
+                        }
+                        commodity_prices_global['Polyester'] = {
+                            'current': 1350,
+                            'previous': 1420,
+                            'unit': 'USD/ton',
+                            'change': -70
+                        }
+                        commodity_prices_global['Viskon'] = {
+                            'current': 2100,
+                            'previous': 2050,
+                            'unit': 'USD/ton',
+                            'change': 50
+                        }
                 else:
-                    print("Pamuk fiyatı çekilemedi, varsayılan değer kullanılıyor")
+                    # yfinance kütüphanesi yoksa varsayılan değerler
+                    print("YFinance kütüphanesi yüklü değil, varsayılan değerler kullanılıyor")
                     commodity_prices_global['Pamuk (Cotlook A Index)'] = {
                         'current': 94.20,
                         'previous': 92.50,
                         'unit': 'USD/lb',
                         'change': 1.7
                     }
-                
-                # Polyester (PET) - Polyester için doğrudan ticker yok, tahmin kullanıyoruz
-                # Petrol fiyatlarına bağlı olarak hareket eder
-                try:
-                    oil_ticker = yf.Ticker("CL=F")  # Crude Oil WTI
-                    oil_hist = oil_ticker.history(period="2d")
-                    
-                    if not oil_hist.empty:
-                        oil_price = oil_hist['Close'].iloc[-1]
-                        # Polyester fiyatı yaklaşık olarak petrol fiyatına göre hesaplanır
-                        # 1 varil petrol ≈ 159 litre, polyester üretimi için maliyet faktörü
-                        polyester_base = 1200
-                        polyester_current = polyester_base + (float(oil_price) - 70) * 10
-                        polyester_previous = polyester_current * 0.98
-                        
-                        commodity_prices_global['Polyester'] = {
-                            'current': float(polyester_current),
-                            'previous': float(polyester_previous),
-                            'unit': 'USD/ton',
-                            'change': float(polyester_current - polyester_previous)
-                        }
-                        print(f"Polyester fiyatı hesaplandı: {polyester_current:.0f} USD/ton (Petrol: {oil_price:.2f})")
-                    else:
-                        raise Exception("Petrol fiyatı çekilemedi")
-                        
-                except Exception as e:
-                    print(f"Polyester fiyatı hesaplanamadı: {e}, varsayılan değer kullanılıyor")
                     commodity_prices_global['Polyester'] = {
                         'current': 1350,
                         'previous': 1420,
                         'unit': 'USD/ton',
                         'change': -70
                     }
-                
-                # Viskon (Viscose) - Doğrudan ticker yok, pamuk fiyatına göre tahmin
-                if 'Pamuk (Cotlook A Index)' in commodity_prices_global:
-                    cotton_price_cents = commodity_prices_global['Pamuk (Cotlook A Index)']['current'] * 100  # cent/lb
-                    viscose_current = cotton_price_cents * 9.5  # Yaklaşık çarpan
-                    viscose_previous = viscose_current * 0.98
-                    
-                    commodity_prices_global['Viskon'] = {
-                        'current': float(viscose_current),
-                        'previous': float(viscose_previous),
-                        'unit': 'USD/ton',
-                        'change': float(viscose_current - viscose_previous)
-                    }
-                    print(f"Viskon fiyatı hesaplandı: {viscose_current:.0f} USD/ton")
-                else:
                     commodity_prices_global['Viskon'] = {
                         'current': 2100,
                         'previous': 2050,
                         'unit': 'USD/ton',
                         'change': 50
                     }
-                    
             except Exception as e:
-                print(f"Gerçek veri çekme hatası: {e}, varsayılan değerler kullanılıyor")
-                # Hata durumunda varsayılan değerleri yükle
-                commodity_prices_global['Pamuk (Cotlook A Index)'] = {
-                    'current': 94.20,
-                    'previous': 92.50,
-                    'unit': 'USD/lb',
-                    'change': 1.7
-                }
-                commodity_prices_global['Polyester'] = {
-                    'current': 1350,
-                    'previous': 1420,
-                    'unit': 'USD/ton',
-                    'change': -70
-                }
-                commodity_prices_global['Viskon'] = {
-                    'current': 2100,
-                    'previous': 2050,
-                    'unit': 'USD/ton',
-                    'change': 50
-                }
-        else:
-            # yfinance kütüphanesi yoksa varsayılan değerler
-            print("YFinance kütüphanesi yüklü değil, varsayılan değerler kullanılıyor")
-            commodity_prices_global['Pamuk (Cotlook A Index)'] = {
-                'current': 94.20,
-                'previous': 92.50,
-                'unit': 'USD/lb',
-                'change': 1.7
-            }
-            commodity_prices_global['Polyester'] = {
-                'current': 1350,
-                'previous': 1420,
-                'unit': 'USD/ton',
-                'change': -70
-            }
-            commodity_prices_global['Viskon'] = {
-                'current': 2100,
-                'previous': 2050,
-                'unit': 'USD/ton',
-                'change': 50
-            }
-        
-        # Geçmiş fiyat verisi oluştur (gerçek tarihsel veri veya simülasyon)
-        commodity_history_global.clear()
-        
-        for commodity in commodity_prices_global.keys():
-            base_price = commodity_prices_global[commodity]['current']
-            history = {}
+                log_thread_error(e, context="fetch_real_commodity_data - Main _fetch function", location="Line 3513")
             
-            # Her zaman aralığı için geçmiş veri oluştur
-            for days in [30, 90, 365]:
-                if YFINANCE_AVAILABLE:
-                    try:
-                        # Gerçek tarihsel veri çekmeyi dene
-                        if commodity == 'Pamuk (Cotlook A Index)':
-                            ticker = yf.Ticker("CT=F")
-                            hist = ticker.history(period=f"{days}d")
-                            
-                            if not hist.empty and len(hist) > 0:
-                                dates = [d.strftime("%Y-%m-%d") for d in hist.index]
-                                prices = hist['Close'].tolist()
-                                history[days] = {'dates': dates, 'prices': prices}
-                                continue
-                    except Exception as e:
-                        print(f"{commodity} için {days} günlük gerçek veri çekilemedi: {e}")
+            # Geçmiş fiyat verisi oluştur (gerçek tarihsel veri veya simülasyon)
+            commodity_history_global.clear()
+            
+            for commodity in commodity_prices_global.keys():
+                base_price = commodity_prices_global[commodity]['current']
+                history = {}
                 
-                # Gerçek veri çekilemezse simülasyon oluştur
-                dates = [(datetime.datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days, -1, -1)]
-                prices = [base_price + random.uniform(-base_price*PRICE_VARIANCE_FACTOR, base_price*PRICE_VARIANCE_FACTOR) for _ in dates]
-                trend = np.linspace(base_price * TREND_START_FACTOR, base_price, len(prices))
-                prices = [p * PRICE_BLEND_RATIO + t * TREND_BLEND_RATIO for p, t in zip(prices, trend)]
-                history[days] = {'dates': dates, 'prices': prices}
+                # Her zaman aralığı için geçmiş veri oluştur
+                for days in [30, 90, 365]:
+                    if YFINANCE_AVAILABLE:
+                        try:
+                            # Gerçek tarihsel veri çekmeyi dene
+                            if commodity == 'Pamuk (Cotlook A Index)':
+                                ticker = yf.Ticker("CT=F")
+                                hist = ticker.history(period=f"{days}d")
+                                
+                                if not hist.empty and len(hist) > 0:
+                                    dates = [d.strftime("%Y-%m-%d") for d in hist.index]
+                                    prices = hist['Close'].tolist()
+                                    history[days] = {'dates': dates, 'prices': prices}
+                                    continue
+                        except Exception as e:
+                            print(f"{commodity} için {days} günlük gerçek veri çekilemedi: {e}")
+                    
+                    # Gerçek veri çekilemezse simülasyon oluştur
+                    dates = [(datetime.datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days, -1, -1)]
+                    prices = [base_price + random.uniform(-base_price*PRICE_VARIANCE_FACTOR, base_price*PRICE_VARIANCE_FACTOR) for _ in dates]
+                    trend = np.linspace(base_price * TREND_START_FACTOR, base_price, len(prices))
+                    prices = [p * PRICE_BLEND_RATIO + t * TREND_BLEND_RATIO for p, t in zip(prices, trend)]
+                    history[days] = {'dates': dates, 'prices': prices}
+                
+                commodity_history_global[commodity] = history
+        
+        def _update_ui(data):
+            """UI'yi güncelle"""
+            try:
+                if 'status_label' in globals() and status_label:
+                    status_label.configure(text="Veriler güncellendi")
+            except:
+                pass  # Status label yoksa veya hata varsa sessizce devam et
             
-            commodity_history_global[commodity] = history
+            # Veri yüklendikten sonra UI'yi güncelle
+            try:
+                update_price_cards()
+                update_chart()
+                update_alerts()
+            except Exception as e:
+                print(f"UI güncelleme hatası: {e}")
+        
+        # Thread'de çalıştır
+        run_in_thread(
+            _fetch, 
+            _update_ui,
+            context="fetch_real_commodity_data - Price and history fetch",
+            location="Line 3690"
+        )
     
     def update_price_cards():
         """Fiyat kartlarını günceller"""
         for widget in cards_frame.winfo_children():
             widget.destroy()
+        
+        # Veri yüklenmemişse uyarı göster
+        if not commodity_prices_global:
+            tk.Label(cards_frame, text="Veri yükleniyor...", font=("Segoe UI", 12), fg="gray", bg="#ecf0f1").pack(pady=20)
+            return
         
         col = 0
         for commodity, data in commodity_prices_global.items():
@@ -3360,7 +4123,8 @@ def init_commodity_intelligence_tab():
         period_text = period_combo.get()
         period = int(period_text.split()[0])
         
-        if commodity not in commodity_history_global:
+        # Veri yüklenmemişse uyarı göster
+        if commodity not in commodity_history_global or commodity not in commodity_prices_global:
             tk.Label(chart_frame, text="Veri yükleniyor...", font=("Segoe UI", 12), fg="gray", bg="white").pack(expand=True)
             return
         
@@ -3368,7 +4132,7 @@ def init_commodity_intelligence_tab():
         dates = history['dates']
         prices = history['prices']
         
-        fig = plt.figure(figsize=(10, 4), dpi=100)
+        fig = register_figure(plt.figure(figsize=(10, 4), dpi=100))
         ax = fig.add_subplot(111)
         
         # Fiyat çizgisi
@@ -3427,10 +4191,9 @@ def init_commodity_intelligence_tab():
     
     def refresh_data():
         """Tüm verileri yeniler"""
+        # fetch_real_commodity_data artık asenkron çalışıyor ve
+        # tamamlandığında otomatik olarak UI'yi güncelliyor
         fetch_real_commodity_data()
-        update_price_cards()
-        update_chart()
-        update_alerts()
         
         if activity_logger:
             activity_logger.log_event("COMMODITY_DATA_REFRESH", "Emtia fiyatları güncellendi", "Hammadde İstihbaratı")
@@ -3645,7 +4408,7 @@ def draw_rek_dashboard(parent):
         draw_kpi(3, "KESİLEN REKLAMASYON", f"{t_rek_tut:,.0f} ₺", f"{df_d['Reklamasyon_Miktar'].sum():,.0f} Birim", "#8e44ad")
 
         chart_frame = tk.Frame(scrollable_frame, bg="#ecf0f1"); chart_frame.pack(fill="x", pady=10, padx=20)
-        fig = plt.figure(figsize=(10, 4), dpi=100)
+        fig = register_figure(plt.figure(figsize=(10, 4), dpi=100))
         ax1 = fig.add_subplot(121)
         if not df_d.empty:
             df_d.groupby("Cari Adı")[["Iade_Tutari", "Reklamasyon_Tutari"]].sum().sum(axis=1).sort_values(ascending=False).head(5).plot(kind="bar", ax=ax1, color="#e74c3c", alpha=0.8)
@@ -4051,20 +4814,29 @@ Konuyla ilgili destek için iletişime geçebilirsiniz.
 Saygılarımızla,
 [İmza]"""
                     
-                    # Text alanını güncelle
-                    draft_text.configure(state="normal")
-                    draft_text.delete("1.0", "end")
-                    draft_text.insert("1.0", ai_draft)
-                    draft_text.configure(state="normal")  # Düzenlenebilir bırak
+                    # Text alanını güncelle - Ana thread'de yap
+                    def update_draft_ui():
+                        draft_text.configure(state="normal")
+                        draft_text.delete("1.0", "end")
+                        draft_text.insert("1.0", ai_draft)
+                        draft_text.configure(state="normal")  # Düzenlenebilir bırak
+                    
+                    root.after(0, update_draft_ui)
                     
                     # LOG
                     if activity_logger:
                         activity_logger.log_event("AI_DRAFT_GENERATED", f"{len(selected_data)} kayıt için mail taslağı oluşturuldu", "Rek Detaylı Rapor")
                     
                 except Exception as e:
-                    draft_text.configure(state="normal")
-                    draft_text.delete("1.0", "end")
-                    draft_text.insert("1.0", f"Hata oluştu: {str(e)}\n\nLütfen tekrar deneyin veya manuel olarak mail oluşturun.")
+                    error_msg = f"Hata oluştu: {str(e)}\n\nLütfen tekrar deneyin veya manuel olarak mail oluşturun."
+                    
+                    def update_error_ui():
+                        draft_text.configure(state="normal")
+                        draft_text.delete("1.0", "end")
+                        draft_text.insert("1.0", error_msg)
+                    
+                    root.after(0, update_error_ui)
+                    
                     if activity_logger:
                         activity_logger.log_error(f"AI draft hatası: {str(e)}", "Rek Detaylı Rapor")
             
@@ -4201,7 +4973,7 @@ def init_rek_mail_tab():
             root.update()
 
             # 1. Grafiği Oluştur ve Kaydet
-            fig = plt.figure(figsize=(8, 4), dpi=100)
+            fig = register_figure(plt.figure(figsize=(8, 4), dpi=100))
             ax = fig.add_subplot(111)
             if df_reklamasyon_global is not None:
                 risk_data = df_reklamasyon_global.groupby("Order Grup Adı")[["Iade_Tutari", "Reklamasyon_Tutari"]].sum().sum(axis=1).sort_values(ascending=False).head(5)
@@ -4474,7 +5246,7 @@ def draw_dashboard(parent, stats=None, df=None):
         charts_frame = tk.Frame(main_frame, bg=bg_color)
         charts_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
-        fig = plt.figure(figsize=(12, 4), facecolor=bg_color)
+        fig = register_figure(plt.figure(figsize=(12, 4), facecolor=bg_color))
         gs = fig.add_gridspec(1, 2, wspace=0.3)
         
         ax1 = fig.add_subplot(gs[0, 0])
@@ -5001,8 +5773,9 @@ def set_destination_marker(coords):
         dest_coord_str = f"{coords[0]:.4f}, {coords[1]:.4f}"
         ai_insight = get_ai_logistics_analysis(origin_name, dest_coord_str, min_dist, weather_info)
         final_text = initial_text.replace("🤖 Yapay Zeka Lojistik Analizi Hazırlanıyor...", f"\n🧠 AI Lojistik Analizi:\n{ai_insight}")
+        # UI güncellemeyi ana thread'e gönder
         if route_info_label:
-            route_info_label.configure(text=final_text)
+            root.after(0, lambda: route_info_label.configure(text=final_text))
     
     threading.Thread(target=fetch_ai_logistics, daemon=True).start()
 
@@ -5388,7 +6161,8 @@ def show_scorecard():
     
     def fetch_comment():
         comment = get_scorecard_ai_comment(row, grade, description)
-        ai_lbl.configure(text=comment)
+        # UI güncellemeyi ana thread'e gönder
+        root.after(0, lambda: ai_lbl.configure(text=comment))
     threading.Thread(target=fetch_comment, daemon=True).start()
 
 def export_scorecard_pdf():
@@ -5489,7 +6263,11 @@ def update_trend_tab(df, date_col, fiyat_col, miktar_col):
     
     def fetch_comment():
         comment = get_trend_ai_comment(monthly_data.tail(12).to_string(index=False))
-        if loading_lbl.winfo_exists(): loading_lbl.configure(text=comment, font=("Arial", 10), fg="#2c3e50", justify="left", wraplength=900)
+        # UI güncellemeyi ana thread'e gönder
+        def update_ui():
+            if loading_lbl.winfo_exists(): 
+                loading_lbl.configure(text=comment, font=("Arial", 10), fg="#2c3e50", justify="left", wraplength=900)
+        root.after(0, update_ui)
     threading.Thread(target=fetch_comment, daemon=True).start()
 
 # ---------- GELECEK TAHMİNİ (FORECASTING) ----------
@@ -6212,7 +6990,9 @@ def generate_order_rationale_gemini(product, qty, allocation_data):
         else:
             root.after(0, lambda: update_ai_text_widget(f"Hata: {response.status_code}"))
     except Exception as e:
-        root.after(0, lambda: update_ai_text_widget(f"Bağlantı Hatası: {str(e)}"))
+        # Lambda closure fix: Capture error immediately
+        error_msg = f"Bağlantı Hatası: {str(e)}"
+        root.after(0, lambda msg=error_msg: update_ai_text_widget(msg))
 
 def update_ai_text_widget(text):
     order_ai_text.configure(state="normal")
@@ -6396,7 +7176,9 @@ def run_negotiator_ai(target_discount, selected_tone):
                 root.after(0, lambda: _update_negotiator_ui(f"Hata: API Yanıt vermedi ({response.status_code})"))
                 
         except Exception as e:
-            root.after(0, lambda: _update_negotiator_ui(f"Bağlantı Hatası: {str(e)}"))
+            # Lambda closure fix: Capture error immediately
+            error_msg = f"Bağlantı Hatası: {str(e)}"
+            root.after(0, lambda msg=error_msg: _update_negotiator_ui(msg))
 
     threading.Thread(target=_thread_task, daemon=True).start()
 
@@ -7179,20 +7961,40 @@ def stop_loading_gif(): ai_progress_bar.stop(); ai_progress_bar.pack_forget()
 def analiz_et_with_options(dosyalar, filter_type, filter_value):
     """Geliştirilmiş analiz motoru: Hibrit skorlama + stok grubu bazlı detaylı analiz + çoklu filtreleme"""
     global df_global, tedarikci_col_global, phone_col_global, sonuc_global, message_global, grafik_ozet_global, outliers_global
-    global stok_grup_col_global, detay_sonuc_global, market_averages_global
+    global stok_grup_col_global, detay_sonuc_global, market_averages_global, analysis_thread_running
+    
+    debug_log("=== ANALİZ BAŞLADI / ANALYSIS STARTED ===", "analiz_et_with_options")
+    debug_log(f"Dosya sayısı: {len(dosyalar)}, Filtre: {filter_type}={filter_value}", "analiz_et_with_options")
+    
+    # Set flag to indicate analysis is running
+    analysis_thread_running = True
+    debug_log("analysis_thread_running = True", "analiz_et_with_options")
+    
     try:
+        debug_log("Activity logger kontrolü...", "analiz_et_with_options")
         # LOG: Analiz başlatıldı
         if activity_logger:
             file_names = ", ".join([os.path.basename(f) for f in dosyalar])
             filter_desc = f"{filter_type}: {filter_value}" if filter_value else "Tümü"
             activity_logger.log_analysis("TEDARIKCI_ANALIZ", f"Dosyalar: {file_names}, Filtre: {filter_desc}", "Analiz")
+            debug_log(f"Activity log kaydedildi: {file_names}", "analiz_et_with_options")
         
+        debug_log("Usage log email thread başlatılıyor...", "analiz_et_with_options")
         threading.Thread(target=lambda: send_usage_log_email(f"Analiz: {len(dosyalar)} dosya")).start()
+        
+        debug_log("UI güncelleniyor (Okunuyor...)...", "analiz_et_with_options")
         root.after(0, lambda: ai_status_label.configure(text="Okunuyor..."))
         
+        debug_log("Dosyalar okunuyor...", "analiz_et_with_options")
         df_list = [pd.read_csv(f, dtype=str) if f.endswith('.csv') else pd.read_excel(f, dtype=str) for f in dosyalar]
+        debug_log(f"{len(df_list)} dosya okundu", "analiz_et_with_options")
+        
+        debug_log("DataFrame birleştiriliyor...", "analiz_et_with_options")
         df = pd.concat(df_list, ignore_index=True)
+        debug_log(f"Toplam satır sayısı: {len(df)}", "analiz_et_with_options")
+        
         df_global = df.copy()
+        debug_log("df_global kopyalandı", "analiz_et_with_options")
         
         # LOG: Veri yüklendi
         if activity_logger:
@@ -7362,7 +8164,7 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         if stok_grup_col:
             # Pazar ortalamaları (kıyaslama için)
             market_averages_global = df_analiz.groupby(stok_grup_col)[[fiyat_col, teslim_col, iade_col]].mean()
-            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=False).apply(apply_scoring)
+            sonuc_grouped = sonuc_grouped.groupby(stok_grup_col, group_keys=False).apply(apply_scoring, include_groups=False)
         else:
             sonuc_grouped = apply_scoring(sonuc_grouped)
 
@@ -7448,12 +8250,31 @@ def analiz_et_with_options(dosyalar, filter_type, filter_value):
         root.after(0, lambda: show_page("Yönetim Paneli"))
         root.after(0, lambda: messagebox.showinfo("Tamam", "Analiz bitti."))
         root.after(0, lambda: ai_status_label.configure(text="Hazır."))
+        debug_log("=== ANALİZ BAŞARIYLA TAMAMLANDI / ANALYSIS COMPLETED ===", "analiz_et_with_options")
         
     except Exception as e:
-        root.after(0, lambda: messagebox.showerror("Hata", str(e)))
+        debug_log(f"!!! ANALİZ HATA / ANALYSIS ERROR: {type(e).__name__}: {str(e)}", "analiz_et_with_options")
+        debug_log(f"Traceback: {traceback.format_exc()}", "analiz_et_with_options")
+        
+        # Log to error file
+        log_thread_error(e, 
+                        context="analiz_et_with_options - Main analysis function", 
+                        location=f"Line {sys.exc_info()[2].tb_lineno}")
+        
+        # Lambda closure fix: Capture error immediately
+        error_msg = str(e)
+        full_error = f"Analiz Hatası:\n\n{error_msg}\n\nDetaylar için error_log dosyasına bakın."
+        root.after(0, lambda msg=full_error: messagebox.showerror("Hata", msg))
         root.after(0, lambda: ai_status_label.configure(text="Hata"))
+        
+        debug_log("Hata mesajı kullanıcıya gösterildi", "analiz_et_with_options")
+        
     finally:
+        # Clear running flag
+        debug_log("Finally bloğu - analysis_thread_running = False", "analiz_et_with_options")
+        analysis_thread_running = False
         root.after(0, stop_loading_gif)
+        debug_log("=== ANALİZ FONKSİYONU BİTTİ / ANALYSIS FUNCTION ENDED ===", "analiz_et_with_options")
 
 def update_listbox(items):
     supplier_listbox.delete(0, tk.END); [supplier_listbox.insert(tk.END, i) for i in items]
@@ -7509,12 +8330,16 @@ class MyEventHandler(FileSystemEventHandler):
                     if activity_logger:
                         activity_logger.log_event("AUTO_FILE_LOAD", f"Dosya: {os.path.basename(file_path)}, Stok sayısı: {len(unique_kodlar)}", "Analiz")
             except Exception as e:
-                root.after(0, lambda: set_status(f"Dosya yüklendi ama stok kodları çıkarılamadı: {str(e)}"))
+                # Lambda closure fix: Capture error immediately
+                error_msg = f"Dosya yüklendi ama stok kodları çıkarılamadı: {str(e)}"
+                root.after(0, lambda msg=error_msg: set_status(msg))
                 if activity_logger:
                     activity_logger.log_error(f"Stok kodu çıkarma hatası: {str(e)}", "Analiz")
                     
         except Exception as e:
-            root.after(0, lambda: set_status(f"Dosya yükleme hatası: {str(e)}"))
+            # Lambda closure fix: Capture error immediately
+            error_msg = f"Dosya yükleme hatası: {str(e)}"
+            root.after(0, lambda msg=error_msg: set_status(msg))
             if activity_logger:
                 activity_logger.log_error(f"Otomatik dosya yükleme hatası: {str(e)}", "Analiz")
 
@@ -7888,14 +8713,30 @@ def filter_stock_codes(event):
         stok_kod_combobox['values'] = filtered_list
 
 def start_analysis_threaded():
-    global file_paths_global
+    global file_paths_global, analysis_thread_running
+    
+    debug_log(">>> start_analysis_threaded ÇAĞRILDI / CALLED", "start_analysis_threaded")
+    
+    # Check if analysis is already running
+    if analysis_thread_running:
+        debug_log("Analiz zaten çalışıyor, uyarı gösteriliyor", "start_analysis_threaded")
+        messagebox.showwarning("Uyarı", 
+            "⚠️ Bir analiz zaten çalışıyor!\n\n"
+            "Lütfen mevcut analiz tamamlanana kadar bekleyin.\n\n"
+            "💡 İpucu: Analiz tamamlandığında 'Analiz bitti' mesajı göreceksiniz.")
+        return
+    
     if not file_paths_global:
+        debug_log("Dosya seçilmemiş, hata gösteriliyor", "start_analysis_threaded")
         messagebox.showerror("Hata", "Lütfen önce dosya seçin.")
         return
+    
+    debug_log(f"Dosya sayısı: {len(file_paths_global)}", "start_analysis_threaded")
     
     ai_progress_bar.pack(pady=10, fill="x")
     ai_progress_bar.start()
     play_loading_gif()
+    debug_log("Progress bar ve loading gif başlatıldı", "start_analysis_threaded")
 
     # Filtreleme tipini ve değerini al
     filter_type = analiz_filter_type_var.get()
@@ -7905,17 +8746,27 @@ def start_analysis_threaded():
         filter_value = stok_kod_combobox.get()
         if filter_value == "Tüm Veri":
             filter_value = ""
+        debug_log(f"Filtre tipi: stock_code, değer: {filter_value}", "start_analysis_threaded")
     elif filter_type == "stock_group":
         filter_value = stok_grup_filter_combobox.get()
         if filter_value == "Tüm Veri":
             filter_value = ""
+        debug_log(f"Filtre tipi: stock_group, değer: {filter_value}", "start_analysis_threaded")
+    else:
+        debug_log(f"Filtre tipi: {filter_type} (tüm veri)", "start_analysis_threaded")
     # filter_type == "none" için filter_value boş kalır
 
+    debug_log("Analiz thread'i oluşturuluyor...", "start_analysis_threaded")
     analysis_thread = threading.Thread(
-        target=lambda: analiz_et_with_options(file_paths_global, filter_type, filter_value)
+        target=lambda: analiz_et_with_options(file_paths_global, filter_type, filter_value),
+        name="AnalysisThread"
     )
     analysis_thread.daemon = True
+    debug_log(f"Thread oluşturuldu: {analysis_thread.name}, daemon={analysis_thread.daemon}", "start_analysis_threaded")
+    
     analysis_thread.start()
+    debug_log(f"Thread başlatıldı, ID: {analysis_thread.ident}", "start_analysis_threaded")
+    debug_log("<<< start_analysis_threaded BİTTİ / ENDED", "start_analysis_threaded")
 
 def export_all_data():
     global df_global
@@ -7960,7 +8811,7 @@ def init_stok_tab():
             import webbrowser
             webbrowser.open(link)
             if activity_logger:
-                activity_logger.log_activity(f"{text} açıldı", "Defacto Üretim Raporları")
+                activity_logger.log_event("LINK_OPEN", f"{text} açıldı", "Defacto Üretim Raporları")
         
         btn = tk.Button(
             parent,
@@ -10692,7 +11543,7 @@ Tedarikçi Uyumluluk Merkezi"""
                             elif os.name == 'posix':  # macOS/Linux
                                 subprocess.call(['open', filepath])
                             if activity_logger:
-                                activity_logger.log_activity(f"Belge açıldı: {os.path.basename(filepath)}", 
+                                activity_logger.log_event("FILE_OPEN", f"Belge açıldı: {os.path.basename(filepath)}", 
                                                             "Tedarikçi Uyumluluk")
                         except Exception as e:
                             messagebox.showerror("Hata", f"Dosya açılırken hata oluştu:\n{str(e)}")
@@ -10766,6 +11617,9 @@ Tedarikçi Uyumluluk Merkezi"""
 def show_page(page_name):
     global current_page_name
     current_page_name = page_name
+    
+    # Önceki grafikleri temizle (Bellek sızıntısı önleme)
+    cleanup_matplotlib_figures()
     
     # LOG: Sayfa ziyareti
     if activity_logger:
@@ -11369,13 +12223,32 @@ comparison_frame = ttk.Frame(frame_karsilastirma); comparison_frame.pack(expand=
 
 def on_closing():
     """Uygulama kapatılırken kaynakları temizler ve güvenli çıkış sağlar."""
+    global _app_shutting_down
+    
     try:
+        # Signal all threads to stop
+        _app_shutting_down = True
+        
+        # Bekleyen logları kaydet
+        flush_activity_logs()
+        
+        # Ayarları kaydet
         save_settings()
+        
+        # Ticker animasyonunu durdur
+        stop_ticker_animation()
+        
+        # Market ticker güncellemelerini durdur
+        stop_market_ticker()
+        
+        # Tüm grafikleri temizle
+        cleanup_matplotlib_figures()
         
         # Klasör izlemeyi durdur
         if observer:
             try:
                 observer.stop()
+                observer.join(timeout=1)  # Wait up to 1 second for observer to stop
             except:
                 pass
         
@@ -11387,11 +12260,60 @@ def on_closing():
                 map_widget.destroy()
             except:
                 pass
+        
+        # Try to join any active threads with timeout
+        try:
+            import threading
+            active_threads = [t for t in threading.enumerate() if t != threading.main_thread() and t.is_alive()]
+            for thread in active_threads:
+                if hasattr(thread, 'join'):
+                    try:
+                        # Give each thread 0.1 seconds to finish
+                        thread.join(timeout=0.1)
+                    except:
+                        pass
+        except:
+            pass
 
-        root.quit()     # Mainloop'tan çık
-        root.destroy()  # Pencereyi yok et
+        # Give daemon threads more time to finish (increased from 100ms to 300ms)
+        # This prevents "Exception ignored in:" errors during garbage collection
+        root.after(300, lambda: _final_cleanup())
+        
     except Exception as e:
         print(f"Kapatma sırasında hata: {e}")
+        # Her durumda çıkmaya çalış
+        _final_cleanup()
+
+def _final_cleanup():
+    """Final cleanup after giving threads time to finish"""
+    try:
+        # Force garbage collection to clean up any remaining objects
+        import gc
+        gc.collect()
+        
+        # Suppress any remaining stderr output during final cleanup
+        import sys
+        import os
+        
+        # Save original stderr
+        original_stderr = sys.stderr
+        
+        try:
+            # Redirect stderr to devnull during cleanup
+            sys.stderr = open(os.devnull, 'w')
+            
+            root.quit()     # Mainloop'tan çık
+            root.destroy()  # Pencereyi yok et
+        finally:
+            # Restore stderr (if we get here)
+            try:
+                sys.stderr.close()
+                sys.stderr = original_stderr
+            except:
+                pass
+                
+    except Exception as e:
+        print(f"Final cleanup hatası: {e}")
         # Her durumda çıkmaya çalış
         try:
             import sys
@@ -11482,10 +12404,15 @@ def load_daily_files():
 
 def auto_run_initial_analysis():
     """Başlangıçta tüm veri için otomatik analiz yapar (aykırı değer filtresi olmadan)"""
-    global file_paths_global, analiz_filter_type_var, exclude_outliers_var
+    global file_paths_global, analiz_filter_type_var, exclude_outliers_var, analysis_thread_running
     
     if not file_paths_global:
         print("Otomatik analiz atlandı: Dosya yüklenmemiş")
+        return
+    
+    # Check if analysis is already running
+    if analysis_thread_running:
+        print("Otomatik analiz atlandı: Bir analiz zaten çalışıyor")
         return
     
     try:
@@ -11511,7 +12438,8 @@ def auto_run_initial_analysis():
         
         # Analiz thread'ini başlat (filter_type="none", filter_value="" ile tüm veri)
         analysis_thread = threading.Thread(
-            target=lambda: analiz_et_with_options(file_paths_global, "none", "")
+            target=lambda: analiz_et_with_options(file_paths_global, "none", ""),
+            name="AutoAnalysisThread"
         )
         analysis_thread.daemon = True
         analysis_thread.start()
